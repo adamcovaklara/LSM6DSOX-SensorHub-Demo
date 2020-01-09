@@ -107,6 +107,54 @@ typedef struct labeled_record {
   char label; // 0 means down, 1 means up
 } labeled_record;
 
+// This file is a "Hello, world!" in C language by gcc for wandbox.
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdint.h>
+#include <string.h>
+
+#define NUM_CALIB 20
+
+typedef struct indexer
+{
+  uint8_t hint[((int)NUM_CALIB + 7) / 8];
+} indexer;
+
+void set_index(indexer * idx, int id)
+{
+  //  printf("array id: %d, bit id: %d, %d\n", (id / 8), (id % 8), idx->hint[id / 8]);
+  // id / 8 is the index in the hint array
+  // id mod 8 is the index of the bit of the uint8_t
+  idx->hint[id / 8] |= (1 << (id % 8));
+//  printf("after %d\n", idx->hint[id / 8]);
+}
+
+void unset_index(indexer * idx, int id)
+{
+  // id / 8 is the index in the hint array
+  // id mod 8 is the index of the bit of the uint8_t
+  // clears the appropriate bit
+  idx->hint[id / 8] &= ~(1 << (id % 8));
+}
+
+uint8_t is_used(const indexer * idx, int id)
+{
+  return (idx->hint[id / 8] & (1 << (id % 8))) ? 1 : 0;
+}
+
+typedef struct node {
+  float val; // split point
+  uint8_t dim; // column where the data set is split
+  uint8_t label;
+  float error; // fraction of opposite labeled data points
+  
+  indexer idx; // stores which data points are for this node
+  labeled_record * data; // p0inter to all data
+  
+  struct node * son; // left
+  struct node * daughter; // right, women are always right
+} node_t;
+
 /* Private variables ---------------------------------------------------------*/
 static char dataOut[MAX_BUF_SIZE];
 static stmdev_ctx_t ag_ctx;
@@ -134,6 +182,7 @@ record_t compute_std(const labeled_record lab_data[], int num_rec, record_t reco
 float compute_gini(const labeled_record data[], int nRecords, float split_point, int dim);
 float dim_data(const record_t * data, int dim);
 static float square(float val);
+node_t dec_tree_generator(labeled_record data, float gini_scores[], float min_gini, int min_idx[], int num_idx, record_t split_points);
 
 /*
  *   WARNING:
@@ -291,14 +340,10 @@ record_t compute_std(const labeled_record lab_data[], int num_rec, record_t reco
   {
     if (lab_data[i].label != label) { continue; }
     const record_t * data = &lab_data[i].data;
-    records_std.acc[0] += pow(data->acc[0] - records_mean.acc[0],2);
-    records_std.acc[1] += pow(data->acc[1] - records_mean.acc[1],2);
-    records_std.acc[2] += pow(data->acc[2] - records_mean.acc[2],2);
-    records_std.press += pow(data->press - records_mean.press,2);
-//                snprintf(dataOut, MAX_BUF_SIZE, "Dataaa %3.f %3.f %3.f %3.f\r\n", data[i].acc[0], data[i].acc[1], data[i].acc[2], data[i].press);
-//    HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
-//                snprintf(dataOut, MAX_BUF_SIZE, "Meannn %3.f %3.f %3.f %3.f\r\n", records_mean.acc[0], records_mean.acc[1], records_mean.acc[2], records_mean.press);
-//    HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+    records_std.acc[0] += square(data->acc[0] - records_mean.acc[0]);
+    records_std.acc[1] += square(data->acc[1] - records_mean.acc[1]);
+    records_std.acc[2] += square(data->acc[2] - records_mean.acc[2]);
+    records_std.press += square(data->press - records_mean.press);
   }
   
   records_std.acc[0] /= num_rec - 1;
@@ -319,6 +364,7 @@ record_t read_it_my_boy(void)
   static const int watermark = 3 * NUM_RECORDS;
   record_t record[NUM_RECORDS]; 
   record_t records_mean;
+  memset(&records_mean, 0, sizeof(records_mean));
  
   uint8_t wtm_flag;
   lsm6dsox_pin_int1_route_t int1_route;
@@ -894,21 +940,152 @@ float compute_gini(const labeled_record data[], int nRecords, float split_point,
   return (gini_up * num_up + gini_down * num_down) / nRecords;
 }
 
+void push(node_t ** head, float val) 
+{
+    node_t * new_node;
+    new_node = (node_t *) malloc(sizeof(node_t));
+
+    new_node->val = val;
+    new_node->next = *head;
+    *head = new_node;
+}
+
+void set_label(node_t * node)
+{
+  int cntUp = 0, cntDown = 0;
+  for (int i = 0; i < NUM_CALIB; ++i)
+  {
+    if (is_used(&(node->idx), i))
+    {
+      if (node->data[i].label == 0)
+      {
+        ++cntDown;
+      }
+      else
+      {
+        ++cntUp;
+      }
+    }
+  }
+  // set label
+  node->label = cntUp > cntDown;
+  node->error = (cntUp > cntDown ? cntDown : cntUp) / (cntUp + cntDown);
+}
+
+void split_node(node_t * node)
+{
+  record_t split_points = calculate_split_points(node);
+
+  float min_val = 100.0f;
+  uint8_t min_id = 255;
+  
+  for (int i = 3; i >= 0; --i)
+  {
+    if (compute_gini(node, dim_data(&split_points, i), i) < min_val)
+    {
+      min_id = i;
+    }
+  }
+  
+  node->dim = min_id;
+  node->val = dim_data(&split_points, min_id), min_id);
+  node->son = node->daughter = NULL;
+  
+  // left one
+  node_t * son = (node_t *)malloc(sizeof(node_t));
+  son->val = 0;
+  son->dim = 0;
+  son->data = node->data;
+  memcpy(son->idx, node->idx, sizeof(node->idx));
+  
+  uint8_t cnt = 0;
+  for (int i = 0; i < NUM_CALIB; ++i)
+  {
+    if (dim_data(&son->data[i].data, node->dim) >= node->val)
+    {
+      unset_index(&(son->idx), i);
+    }
+    else if(is_used((&son->idx), i)
+    {
+      ++cnt;
+    }
+  }
+  if (cnt > 0)
+  {
+    node->son = son;
+    set_label(son);
+  }
+  else 
+  {
+    free(son);
+    son = NULL;
+  }
+  
+  node_t * daughter = (node_t *)malloc(sizeof(node_t));
+  daughter->val = 0;
+  daughter->dim = 0;
+  daughter->data = node->data;
+  memcpy(daughter->idx, node->idx, sizeof(node->idx));
+  
+  cnt = 0;
+  for (int i = 0; i < NUM_CALIB; ++i)
+  {
+    if (dim_data(&daughter->data[i].data, node->dim) < node->val)
+    {
+      unset_index(&(daughter->idx), i);
+    }
+    else if(is_used((&daughter->idx), i)
+    {
+      ++cnt;
+    }
+  }
+  if (cnt > 0)
+  {
+    node->daughter = daughter;
+    set_label(daughter);
+  }
+  else 
+  {
+    free(daughter);
+    daughter = NULL;
+  }
+  
+   if (min_val == 0) // min gini
+   {
+     return;
+   }
+    
+   if (node->son != NULL && node->son->error > 0)
+   {
+     split_node(node->son);
+   }
+   
+   if (node->daughter != NULL && node->daughter->error > 0)
+   {
+     split_node(node->daughter);
+   }
+}
+
+node_t * dec_tree_generator(labeled_record data[] /* nRecords is NUM_CALIB */);
+{
+  node_t * head = (node_t *) malloc(sizeof(node_t));
+  memset(head, 0, sizeof(node_t));
+  head->data = data;
+  for (int i = 0; i < NUM_CALIB; ++i)
+  {
+    set_index(&(head->idx), i);
+  }
+  
+  split_node(head);
+  
+  return head;
+}
+
  int main(void)
 {
   init();
   labeled_record data[NUM_CALIB];
   memset(data, 0, sizeof(data)); // set default labels to down (0)
-  
-  //char classified[NUM_CALIB][5]; // na kazdy index  se vejdou 4 znaky + ukoncovaci nula
-  //memset(classified, 0, sizeof(classified)); // 5 * NUM_CALIB * sizeof(char)
-  //record_t data[NUM_CALIB];
-  //record_t data_down[NUM_CALIB];
-  //record_t data_up[NUM_CALIB];
-  //memset(&data_up,0,sizeof(data_up));
-  //memset(&data_down,0,sizeof(data_down));
-  //int num_up = 0;
-  //int num_down = 0;
   
   for (int i = 0; i < NUM_CALIB; ++i)
   {
@@ -931,13 +1108,195 @@ float compute_gini(const labeled_record data[], int nRecords, float split_point,
   Sleep_Mode();
   
   float gini_scores[4];
+  float min_gini = 1000000;
+  int min_idx[4];
+  memset(min_idx, 0, sizeof(min_idx));
+  int num_idx = 0;
+  
   for (int i = 0; i < 4; ++i)
   {
     gini_scores[i] = compute_gini(data, NUM_CALIB, dim_data(&split_points, i), i);
+    if (gini_scores[i] <= min_gini)
+    {
+      min_gini = gini_scores[i]; 
+    }
   }
+  
   snprintf(dataOut, MAX_BUF_SIZE, "\r\ngini: %.3f %.3f %.3f %.3f\r\n", gini_scores[0], gini_scores[1], gini_scores[2], gini_scores[3]);
   HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
-
+  
+  for (int i = 0; i < 4; i++)
+  {
+    if (min_gini == gini_scores[i])
+    {
+      min_idx[num_idx] = i;
+      num_idx += 1;
+    }
+  }
+  
+  dec_tree_generator(data, gini_scores, min_gini, min_idx, num_idx, split_points);
+  
+  int second_split = 1;
+  int second_feature = 0;
+  int features[3];
+  int num_feat = 0;
+  switch (num_idx)
+  {
+  case 4:
+    snprintf(dataOut, MAX_BUF_SIZE, "\r\nFIRST SPLIT\r\nlowest cost: %.3f index: %d %d %d %d\r\n", min_gini, min_idx[num_idx-4], min_idx[num_idx-3], min_idx[num_idx-2], min_idx[num_idx-1]);
+    HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+    second_split = 0;
+    break;
+  case 3:
+    snprintf(dataOut, MAX_BUF_SIZE, "\r\nFIRST SPLIT\r\nlowest cost: %.3f index: %d %d %d\r\n", min_gini, min_idx[num_idx-3], min_idx[num_idx-2], min_idx[num_idx-1]);
+    HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+    for (int i = 0; i < 4; ++i)
+    {
+      if (i != min_idx[num_idx-3] && i != min_idx[num_idx-2] && i != min_idx[num_idx-1])
+        second_feature = i;
+    }
+    if (second_feature == 0)
+    {
+      for (int i = 0; i < NUM_CALIB; ++i)
+        data[i].data.acc[0] = 0;
+    }
+    if (second_feature == 1)
+    {
+      for (int i = 0; i < NUM_CALIB; ++i)
+        data[i].data.acc[1] = 0;
+    }
+    if (second_feature == 2)
+    {
+      for (int i = 0; i < NUM_CALIB; ++i)
+        data[i].data.acc[2] = 0;
+    }
+    if (second_feature == 3)
+    {
+      for (int i = 0; i < NUM_CALIB; ++i)
+        data[i].data.press = 0;
+    }
+    break;
+  case 2:
+    snprintf(dataOut, MAX_BUF_SIZE, "\r\nFIRST SPLIT\r\nlowest cost: %.3f index: %d %d\r\n", min_gini, min_idx[num_idx-2], min_idx[num_idx-1]);
+    HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+    for (int i = 0; i < 4; ++i)
+    {
+      if (i != min_idx[num_idx-2] && i != min_idx[num_idx-1])
+      {
+        features[num_feat] = i;
+        num_feat += 1;
+      }
+    }
+    
+    for (int i = 0; i < num_feat; ++i)
+    {
+      if (features[i] == 0)
+      {
+        for (int i = 0; i < NUM_CALIB; ++i)
+          data[i].data.acc[0] = 0;
+      }
+      if (features[i] == 1)
+      {
+        for (int i = 0; i < NUM_CALIB; ++i)
+          data[i].data.acc[1] = 0;
+      }
+      if (features[i] == 2)
+      {
+        for (int i = 0; i < NUM_CALIB; ++i)
+          data[i].data.acc[2] = 0;
+      }
+      if (features[i] == 3)
+      {
+        for (int i = 0; i < NUM_CALIB; ++i)
+          data[i].data.press = 0;
+      }
+    }
+    break;
+  case 1:
+    snprintf(dataOut, MAX_BUF_SIZE, "\r\nFIRST SPLIT\r\nlowest cost: %.3f index: %d\r\n", min_gini, min_idx[num_idx-1]);
+    HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+    for (int i = 0; i < 4; ++i)
+    {
+      if (i != min_idx[num_idx-1])
+      {
+        features[num_feat] = i;
+        num_feat += 1;
+      }
+    }
+    
+    for (int i = 0; i < num_feat; ++i)
+    {
+      if (features[i] == 0)
+      {
+        for (int i = 0; i < NUM_CALIB; ++i)
+          data[i].data.acc[0] = 0;
+      }
+      if (features[i] == 1)
+      {
+        for (int i = 0; i < NUM_CALIB; ++i)
+          data[i].data.acc[1] = 0;
+      }
+      if (features[i] == 2)
+      {
+        for (int i = 0; i < NUM_CALIB; ++i)
+          data[i].data.acc[2] = 0;
+      }
+      if (features[i] == 3)
+      {
+        for (int i = 0; i < NUM_CALIB; ++i)
+          data[i].data.press = 0;
+      }
+    }
+    break;
+  } 
+  
+  if (second_split)
+  {  
+    float min_gini = 1000000;
+    for (int i = 0; i < num_idx; i++)
+    {
+      gini_scores[i] = compute_gini(data, num_idx, dim_data(&split_points, i), i);
+      if (gini_scores[i] <= min_gini)
+      {
+        min_gini = gini_scores[i]; 
+      }
+    }
+    
+    num_idx = 0;    
+    memset(min_idx, 0, sizeof(min_idx));
+    
+    for (int i = 0; i < 3; i++)
+    {
+      if (min_gini == gini_scores[i])
+      {
+        min_idx[num_idx] = i;
+        num_idx += 1;
+      }
+    }
+    
+    switch (num_idx)
+    {
+    case 3:
+      snprintf(dataOut, MAX_BUF_SIZE, "\r\ngini: %.3f %.3f %.3f\r\n", gini_scores[0], gini_scores[1], gini_scores[2]);
+      HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+      snprintf(dataOut, MAX_BUF_SIZE, "\r\nSECOND SPLIT\r\nlowest cost: %.3f index: %d %d %d\r\n", min_gini, min_idx[num_idx-3], min_idx[num_idx-2], min_idx[num_idx-1]);
+      HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+      break;
+    case 2:
+      snprintf(dataOut, MAX_BUF_SIZE, "\r\ngini: %.3f %.3f\r\n", gini_scores[0], gini_scores[1]);
+      HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+      snprintf(dataOut, MAX_BUF_SIZE, "\r\nSECOND SPLIT\r\nlowest cost: %.3f index: %d %d\r\n", min_gini, min_idx[num_idx-2], min_idx[num_idx-1]);
+      HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+      break;
+    case 1:
+      snprintf(dataOut, MAX_BUF_SIZE, "\r\ngini: %.3f\r\n", gini_scores[0]);
+      HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+      snprintf(dataOut, MAX_BUF_SIZE, "\r\nSECOND SPLIT\r\nlowest cost: %.3f index: %d\r\n", min_gini, min_idx[num_idx-1]);
+      HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+      break;
+    }
+  }
+  
   /* Infinite loop */
   while (1)
   {
@@ -945,37 +1304,37 @@ float compute_gini(const labeled_record data[], int nRecords, float split_point,
     {
       /* _NOTE_: Pushing button creates interrupt/event and wakes up MCU from sleep mode */
       record_t data[3];
-        memset(&data, 0, sizeof(data));
-        
-        float min = 1000000.0f;
-        float max = 0.0f;
-        int idx_min = 0;
-        int idx_max = 0;
-        
-        for (int i = 0; i < 3; ++i)
+      memset(&data, 0, sizeof(data));
+      
+      float min = 1000000.0f;
+      float max = 0.0f;
+      int idx_min = 0;
+      int idx_max = 0;
+      
+      for (int i = 0; i < 3; ++i)
+      {
+        data[i] = read_it_my_boy();
+        if (data[i].press > max)
         {
-          data[i] = read_it_my_boy();
-          if (data[i].press > max)
-          {
-            max = data[i].press;
-            idx_max = i;
-          }
-          if (data[i].press < min)
-          {
-            min = data[i].press;
-            idx_min = i;
-          }
+          max = data[i].press;
+          idx_max = i;
         }
-        
-        snprintf(dataOut, MAX_BUF_SIZE, "\r\nPEAK TO PEAK: %f\r\n", (max - min));
-        HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
-        
-        class_it_my_boy(max, min, idx_max, idx_min);
-        
+        if (data[i].press < min)
+        {
+          min = data[i].press;
+          idx_min = i;
+        }
+      }
+      
+      snprintf(dataOut, MAX_BUF_SIZE, "\r\nPEAK TO PEAK: %f\r\n", (max - min));
+      HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+      
+      class_it_my_boy(max, min, idx_max, idx_min);
+      
       /* Reset FIFO by setting FIFO mode to Bypass */
       lsm6dsox_fifo_mode_set(&ag_ctx, LSM6DSOX_BYPASS_MODE);
-        
-        button_pressed = 0;
+      
+      button_pressed = 0;
       }
    }
  }

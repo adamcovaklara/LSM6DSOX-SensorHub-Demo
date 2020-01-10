@@ -22,6 +22,12 @@
 #include "usart.h"
 #include "gpio.h"
 #include "com.h"
+#include <math.h>
+#include <ctype.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <stdint.h>
+#include <string.h>
 #include "C:\IKS0LAB_SensorHub-modified\IKS0LAB_SensorHub\Drivers\lps22hh\lps22hh.h"
 #include "C:\IKS0LAB_SensorHub-modified\IKS0LAB_SensorHub\Drivers\lsm6dsox\lsm6dsox.h"
 #include "C:\IKS0LAB_SensorHub-modified\IKS0LAB_SensorHub\Drivers\lsm6dsox\lsm6dsox_reg.h"
@@ -107,14 +113,6 @@ typedef struct labeled_record {
   char label; // 0 means down, 1 means up
 } labeled_record;
 
-// This file is a "Hello, world!" in C language by gcc for wandbox.
-#include <stdio.h>
-#include <stdlib.h>
-#include <stdint.h>
-#include <string.h>
-
-#define NUM_CALIB 20
-
 typedef struct indexer
 {
   uint8_t hint[((int)NUM_CALIB + 7) / 8];
@@ -182,7 +180,7 @@ record_t compute_std(const labeled_record lab_data[], int num_rec, record_t reco
 float compute_gini(const labeled_record data[], int nRecords, float split_point, int dim);
 float dim_data(const record_t * data, int dim);
 static float square(float val);
-node_t dec_tree_generator(labeled_record data, float gini_scores[], float min_gini, int min_idx[], int num_idx, record_t split_points);
+node_t * dec_tree_generator(labeled_record data[]);
 
 /*
  *   WARNING:
@@ -858,7 +856,7 @@ float get_split_point(float m1, float m2, float o1, float o2)
     
     return m1 + tmp * dist;
 }
-record_t calculate_split_points(const labeled_record data[], const int nRecords)
+record_t calculate_split_points(labeled_record data[], const int nRecords)
 {
   record_t res;
   record_t mean_up = compute_mean(data, nRecords, 1 /* up*/);
@@ -940,16 +938,6 @@ float compute_gini(const labeled_record data[], int nRecords, float split_point,
   return (gini_up * num_up + gini_down * num_down) / nRecords;
 }
 
-void push(node_t ** head, float val) 
-{
-    node_t * new_node;
-    new_node = (node_t *) malloc(sizeof(node_t));
-
-    new_node->val = val;
-    new_node->next = *head;
-    *head = new_node;
-}
-
 void set_label(node_t * node)
 {
   int cntUp = 0, cntDown = 0;
@@ -974,21 +962,29 @@ void set_label(node_t * node)
 
 void split_node(node_t * node)
 {
-  record_t split_points = calculate_split_points(node);
+  labeled_record data;
+  data.data = node->data->data;
+  data.label = node->label;
+  record_t split_points = calculate_split_points(&data, NUM_CALIB);
 
+  snprintf(dataOut, MAX_BUF_SIZE, "\r\nSplit points: %.3f %.3f %.3f %.3f\r\n", split_points.acc[0], split_points.acc[1], split_points.acc[2], split_points.press);
+  HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+  
   float min_val = 100.0f;
   uint8_t min_id = 255;
   
   for (int i = 3; i >= 0; --i)
   {
-    if (compute_gini(node, dim_data(&split_points, i), i) < min_val)
+    if (compute_gini(&data, NUM_CALIB, dim_data(&split_points, i), i) < min_val)
     {
       min_id = i;
+      snprintf(dataOut, MAX_BUF_SIZE, "\r\ngini: %.3f, min id: %d\r\n", compute_gini(&data, NUM_CALIB, dim_data(&split_points, i), i), min_id);
+      HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
     }
   }
   
   node->dim = min_id;
-  node->val = dim_data(&split_points, min_id), min_id);
+  node->val = dim_data(&split_points, min_id);
   node->son = node->daughter = NULL;
   
   // left one
@@ -996,7 +992,7 @@ void split_node(node_t * node)
   son->val = 0;
   son->dim = 0;
   son->data = node->data;
-  memcpy(son->idx, node->idx, sizeof(node->idx));
+  memcpy(&son->idx, &node->idx, sizeof(node->idx));
   
   uint8_t cnt = 0;
   for (int i = 0; i < NUM_CALIB; ++i)
@@ -1005,7 +1001,7 @@ void split_node(node_t * node)
     {
       unset_index(&(son->idx), i);
     }
-    else if(is_used((&son->idx), i)
+    else if(is_used((&son->idx), i))
     {
       ++cnt;
     }
@@ -1025,7 +1021,7 @@ void split_node(node_t * node)
   daughter->val = 0;
   daughter->dim = 0;
   daughter->data = node->data;
-  memcpy(daughter->idx, node->idx, sizeof(node->idx));
+  memcpy(&daughter->idx, &node->idx, sizeof(node->idx));
   
   cnt = 0;
   for (int i = 0; i < NUM_CALIB; ++i)
@@ -1034,7 +1030,7 @@ void split_node(node_t * node)
     {
       unset_index(&(daughter->idx), i);
     }
-    else if(is_used((&daughter->idx), i)
+    else if(is_used((&daughter->idx), i))
     {
       ++cnt;
     }
@@ -1064,9 +1060,13 @@ void split_node(node_t * node)
    {
      split_node(node->daughter);
    }
+  snprintf(dataOut, MAX_BUF_SIZE, "\r\nSon: %.3f %.3f %.3f %.3f\r\n", son->data->data.acc[0], son->data->data.acc[1], son->data->data.acc[2], son->data->data.press);
+  HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+  snprintf(dataOut, MAX_BUF_SIZE, "\r\nDaughter: %.3f %.3f %.3f %.3f\r\n", daughter->data->data.acc[0], daughter->data->data.acc[1], daughter->data->data.acc[2], daughter->data->data.press);
+  HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
 }
 
-node_t * dec_tree_generator(labeled_record data[] /* nRecords is NUM_CALIB */);
+node_t * dec_tree_generator(labeled_record data[] /* nRecords is NUM_CALIB */)
 {
   node_t * head = (node_t *) malloc(sizeof(node_t));
   memset(head, 0, sizeof(node_t));
@@ -1075,6 +1075,8 @@ node_t * dec_tree_generator(labeled_record data[] /* nRecords is NUM_CALIB */);
   {
     set_index(&(head->idx), i);
   }
+  snprintf(dataOut, MAX_BUF_SIZE, "\r\nHead: %.3f %.3f %.3f %.3f\r\n", head->data->data.acc[0], head->data->data.acc[1], head->data->data.acc[2], head->data->data.press);
+  HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
   
   split_node(head);
   
@@ -1108,194 +1110,16 @@ node_t * dec_tree_generator(labeled_record data[] /* nRecords is NUM_CALIB */);
   Sleep_Mode();
   
   float gini_scores[4];
-  float min_gini = 1000000;
-  int min_idx[4];
-  memset(min_idx, 0, sizeof(min_idx));
-  int num_idx = 0;
-  
+
   for (int i = 0; i < 4; ++i)
   {
     gini_scores[i] = compute_gini(data, NUM_CALIB, dim_data(&split_points, i), i);
-    if (gini_scores[i] <= min_gini)
-    {
-      min_gini = gini_scores[i]; 
-    }
   }
   
   snprintf(dataOut, MAX_BUF_SIZE, "\r\ngini: %.3f %.3f %.3f %.3f\r\n", gini_scores[0], gini_scores[1], gini_scores[2], gini_scores[3]);
   HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
   
-  for (int i = 0; i < 4; i++)
-  {
-    if (min_gini == gini_scores[i])
-    {
-      min_idx[num_idx] = i;
-      num_idx += 1;
-    }
-  }
-  
-  dec_tree_generator(data, gini_scores, min_gini, min_idx, num_idx, split_points);
-  
-  int second_split = 1;
-  int second_feature = 0;
-  int features[3];
-  int num_feat = 0;
-  switch (num_idx)
-  {
-  case 4:
-    snprintf(dataOut, MAX_BUF_SIZE, "\r\nFIRST SPLIT\r\nlowest cost: %.3f index: %d %d %d %d\r\n", min_gini, min_idx[num_idx-4], min_idx[num_idx-3], min_idx[num_idx-2], min_idx[num_idx-1]);
-    HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
-    second_split = 0;
-    break;
-  case 3:
-    snprintf(dataOut, MAX_BUF_SIZE, "\r\nFIRST SPLIT\r\nlowest cost: %.3f index: %d %d %d\r\n", min_gini, min_idx[num_idx-3], min_idx[num_idx-2], min_idx[num_idx-1]);
-    HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
-    for (int i = 0; i < 4; ++i)
-    {
-      if (i != min_idx[num_idx-3] && i != min_idx[num_idx-2] && i != min_idx[num_idx-1])
-        second_feature = i;
-    }
-    if (second_feature == 0)
-    {
-      for (int i = 0; i < NUM_CALIB; ++i)
-        data[i].data.acc[0] = 0;
-    }
-    if (second_feature == 1)
-    {
-      for (int i = 0; i < NUM_CALIB; ++i)
-        data[i].data.acc[1] = 0;
-    }
-    if (second_feature == 2)
-    {
-      for (int i = 0; i < NUM_CALIB; ++i)
-        data[i].data.acc[2] = 0;
-    }
-    if (second_feature == 3)
-    {
-      for (int i = 0; i < NUM_CALIB; ++i)
-        data[i].data.press = 0;
-    }
-    break;
-  case 2:
-    snprintf(dataOut, MAX_BUF_SIZE, "\r\nFIRST SPLIT\r\nlowest cost: %.3f index: %d %d\r\n", min_gini, min_idx[num_idx-2], min_idx[num_idx-1]);
-    HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
-    for (int i = 0; i < 4; ++i)
-    {
-      if (i != min_idx[num_idx-2] && i != min_idx[num_idx-1])
-      {
-        features[num_feat] = i;
-        num_feat += 1;
-      }
-    }
-    
-    for (int i = 0; i < num_feat; ++i)
-    {
-      if (features[i] == 0)
-      {
-        for (int i = 0; i < NUM_CALIB; ++i)
-          data[i].data.acc[0] = 0;
-      }
-      if (features[i] == 1)
-      {
-        for (int i = 0; i < NUM_CALIB; ++i)
-          data[i].data.acc[1] = 0;
-      }
-      if (features[i] == 2)
-      {
-        for (int i = 0; i < NUM_CALIB; ++i)
-          data[i].data.acc[2] = 0;
-      }
-      if (features[i] == 3)
-      {
-        for (int i = 0; i < NUM_CALIB; ++i)
-          data[i].data.press = 0;
-      }
-    }
-    break;
-  case 1:
-    snprintf(dataOut, MAX_BUF_SIZE, "\r\nFIRST SPLIT\r\nlowest cost: %.3f index: %d\r\n", min_gini, min_idx[num_idx-1]);
-    HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
-    for (int i = 0; i < 4; ++i)
-    {
-      if (i != min_idx[num_idx-1])
-      {
-        features[num_feat] = i;
-        num_feat += 1;
-      }
-    }
-    
-    for (int i = 0; i < num_feat; ++i)
-    {
-      if (features[i] == 0)
-      {
-        for (int i = 0; i < NUM_CALIB; ++i)
-          data[i].data.acc[0] = 0;
-      }
-      if (features[i] == 1)
-      {
-        for (int i = 0; i < NUM_CALIB; ++i)
-          data[i].data.acc[1] = 0;
-      }
-      if (features[i] == 2)
-      {
-        for (int i = 0; i < NUM_CALIB; ++i)
-          data[i].data.acc[2] = 0;
-      }
-      if (features[i] == 3)
-      {
-        for (int i = 0; i < NUM_CALIB; ++i)
-          data[i].data.press = 0;
-      }
-    }
-    break;
-  } 
-  
-  if (second_split)
-  {  
-    float min_gini = 1000000;
-    for (int i = 0; i < num_idx; i++)
-    {
-      gini_scores[i] = compute_gini(data, num_idx, dim_data(&split_points, i), i);
-      if (gini_scores[i] <= min_gini)
-      {
-        min_gini = gini_scores[i]; 
-      }
-    }
-    
-    num_idx = 0;    
-    memset(min_idx, 0, sizeof(min_idx));
-    
-    for (int i = 0; i < 3; i++)
-    {
-      if (min_gini == gini_scores[i])
-      {
-        min_idx[num_idx] = i;
-        num_idx += 1;
-      }
-    }
-    
-    switch (num_idx)
-    {
-    case 3:
-      snprintf(dataOut, MAX_BUF_SIZE, "\r\ngini: %.3f %.3f %.3f\r\n", gini_scores[0], gini_scores[1], gini_scores[2]);
-      HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
-      snprintf(dataOut, MAX_BUF_SIZE, "\r\nSECOND SPLIT\r\nlowest cost: %.3f index: %d %d %d\r\n", min_gini, min_idx[num_idx-3], min_idx[num_idx-2], min_idx[num_idx-1]);
-      HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
-      break;
-    case 2:
-      snprintf(dataOut, MAX_BUF_SIZE, "\r\ngini: %.3f %.3f\r\n", gini_scores[0], gini_scores[1]);
-      HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
-      snprintf(dataOut, MAX_BUF_SIZE, "\r\nSECOND SPLIT\r\nlowest cost: %.3f index: %d %d\r\n", min_gini, min_idx[num_idx-2], min_idx[num_idx-1]);
-      HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
-      break;
-    case 1:
-      snprintf(dataOut, MAX_BUF_SIZE, "\r\ngini: %.3f\r\n", gini_scores[0]);
-      HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
-      snprintf(dataOut, MAX_BUF_SIZE, "\r\nSECOND SPLIT\r\nlowest cost: %.3f index: %d\r\n", min_gini, min_idx[num_idx-1]);
-      HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
-      break;
-    }
-  }
+  dec_tree_generator(data);
   
   /* Infinite loop */
   while (1)

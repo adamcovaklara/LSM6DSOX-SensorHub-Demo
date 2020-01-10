@@ -5,13 +5,12 @@
   ******************************************************************************
   * @attention
   *
-  * <h2><center>&copy; Copyright (c) 2019 STMicroelectronics.
-  * All rights reserved.</center></h2>
+  * Copyright (c) 2019 STMicroelectronics.
+  * All rights reserved.
   *
   * This software component is licensed by ST under BSD 3-Clause license,
   * the "License"; You may not use this file except in compliance with the
-  * License. You may obtain a copy of the License at:
-  *                        opensource.org/licenses/BSD-3-Clause
+  * License. You may obtain a copy of the License at: opensource.org/licenses/BSD-3-Clause
   *
   ******************************************************************************
   */
@@ -28,10 +27,10 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
-#include "C:\IKS0LAB_SensorHub-modified\IKS0LAB_SensorHub\Drivers\lps22hh\lps22hh.h"
-#include "C:\IKS0LAB_SensorHub-modified\IKS0LAB_SensorHub\Drivers\lsm6dsox\lsm6dsox.h"
-#include "C:\IKS0LAB_SensorHub-modified\IKS0LAB_SensorHub\Drivers\lsm6dsox\lsm6dsox_reg.h"
-#include "C:\IKS0LAB_SensorHub-modified\IKS0LAB_SensorHub\Drivers\lps22hh\lps22hh_reg.h"
+#include "lps22hh.h"
+#include "lps22hh_reg.h"
+#include "lsm6dsox.h"
+#include "lsm6dsox_reg.h"
 
 /* Private typedef -----------------------------------------------------------*/
 extern  I2C_HandleTypeDef I2C_EXPBD_Handle;
@@ -970,18 +969,50 @@ void split_node(node_t * node)
   snprintf(dataOut, MAX_BUF_SIZE, "\r\nSplit points: %.3f %.3f %.3f %.3f\r\n", split_points.acc[0], split_points.acc[1], split_points.acc[2], split_points.press);
   HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
   
-  float min_val = 100.0f;
+  float min_val = 1000000.0f;
   uint8_t min_id = 255;
+  int min_idx[4];
+  memset(min_idx, 0, sizeof(min_idx));
+  int num_idx = 0;
+  float gini_scores[NUM_CALIB];
   
   for (int i = 3; i >= 0; --i)
   {
-    if (compute_gini(&data, NUM_CALIB, dim_data(&split_points, i), i) < min_val)
+    gini_scores[i] = compute_gini(&data, NUM_CALIB, dim_data(&split_points, i), i);
+    if (gini_scores[i] < min_val)
     {
       min_id = i;
-      snprintf(dataOut, MAX_BUF_SIZE, "\r\ngini: %.3f, min id: %d\r\n", compute_gini(&data, NUM_CALIB, dim_data(&split_points, i), i), min_id);
-      HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+      min_val = gini_scores[i];
+    }
+
+    if (min_val == gini_scores[i])
+    {
+      min_idx[num_idx] = i;
+      num_idx += 1;
     }
   }
+  snprintf(dataOut, MAX_BUF_SIZE, "\r\nGini scores: %.3f %.3f %.3f %.3f\r\n", gini_scores[0], gini_scores[1], gini_scores[2], gini_scores[3]);
+  HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT); 
+  
+  switch (num_idx)
+  {
+  case 4:
+    snprintf(dataOut, MAX_BUF_SIZE, "\r\nIndex with lowest cost: %d %d %d %d\r\n", min_idx[num_idx-1], min_idx[num_idx-2], min_idx[num_idx-3], min_idx[num_idx-4]);
+    HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+    break;
+  case 3:
+    snprintf(dataOut, MAX_BUF_SIZE, "\r\nIndex with lowest cost: %d %d %d\r\n", min_idx[num_idx-1], min_idx[num_idx-2], min_idx[num_idx-3]);
+    HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+    break;
+  case 2:
+    snprintf(dataOut, MAX_BUF_SIZE, "\r\nIndex with lowest cost: %d %d\r\n", min_idx[num_idx-1], min_idx[num_idx-2]);
+    HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+    break;
+  case 1:
+    snprintf(dataOut, MAX_BUF_SIZE, "\r\nIndex with lowest cost: %d\r\n", min_idx[num_idx-1]);
+    HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+    break;
+  } 
   
   node->dim = min_id;
   node->val = dim_data(&split_points, min_id);
@@ -1062,7 +1093,7 @@ void split_node(node_t * node)
    }
   snprintf(dataOut, MAX_BUF_SIZE, "\r\nSon: %.3f %.3f %.3f %.3f\r\n", son->data->data.acc[0], son->data->data.acc[1], son->data->data.acc[2], son->data->data.press);
   HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
-  snprintf(dataOut, MAX_BUF_SIZE, "\r\nDaughter: %.3f %.3f %.3f %.3f\r\n", daughter->data->data.acc[0], daughter->data->data.acc[1], daughter->data->data.acc[2], daughter->data->data.press);
+  snprintf(dataOut, MAX_BUF_SIZE, "\r\nDaughter: %.3f %.3f %.3f %.3f\r\n\r\n", daughter->data->data.acc[0], daughter->data->data.acc[1], daughter->data->data.acc[2], daughter->data->data.press);
   HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
 }
 
@@ -1081,6 +1112,103 @@ node_t * dec_tree_generator(labeled_record data[] /* nRecords is NUM_CALIB */)
   split_node(head);
   
   return head;
+}
+
+void J48_output_maker(int num_idx, int min_idx[], record_t split_points[])
+{
+   FILE * fp;
+   int i;
+   snprintf(dataOut, MAX_BUF_SIZE, "\r\nIn J48 maker.\r\n");
+   HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+   /* open the file for writing */
+   fp = fopen ("C:\\IKS0LAB_SensorHub\\J48_dec_tree.txt","w");
+   if (!fp)
+    perror("fopen");
+   
+   snprintf(dataOut, MAX_BUF_SIZE, "\r\nFile opened.\r\n");
+   HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+   
+   switch (num_idx)
+   {
+   case 4:
+     fprintf (fp, "ACC_X <= %.3f\n",dim_data(&split_points[0],0));
+     fprintf (fp, "ACC_Y <= %.3f\n",split_points[0].acc[1]);
+     fprintf (fp, "ACC_Z <= %.3f\n",split_points[0].acc[2]);
+     fprintf (fp, "PRESS <= %.3f\n",split_points[0].press);
+     break;
+   case 3:
+     if (min_idx[num_idx] != 0)
+     {
+       fprintf (fp, "ACC_Y <= %.3f\n",split_points[0].acc[1]);
+       fprintf (fp, "ACC_Z <= %.3f\n",split_points[0].acc[2]);
+       fprintf (fp, "PRESS <= %.3f\n",split_points[0].press);
+     }
+     if (min_idx[num_idx] != 1)
+     {
+       fprintf (fp, "ACC_X <= %.3f\n",split_points[0].acc[0]);
+       fprintf (fp, "ACC_Z <= %.3f\n",split_points[0].acc[2]);
+       fprintf (fp, "PRESS <= %.3f\n",split_points[0].press);
+     }
+     if (min_idx[num_idx] != 2)
+     {
+       fprintf (fp, "ACC_X <= %.3f\n",split_points[0].acc[0]);
+       fprintf (fp, "ACC_Y <= %.3f\n",split_points[0].acc[1]);
+       fprintf (fp, "PRESS <= %.3f\n",split_points[0].press);
+     }
+     if (min_idx[num_idx] != 3)
+     {
+       fprintf (fp, "ACC_X <= %.3f\n",split_points[0].acc[0]);
+       fprintf (fp, "ACC_Y <= %.3f\n",split_points[0].acc[1]);
+       fprintf (fp, "ACC_Z <= %.3f\n",split_points[0].acc[2]);
+     }
+     break;
+   case 2:
+     if (min_idx[num_idx] == 1 && min_idx[num_idx] == 2)
+     {
+       fprintf (fp, "ACC_Y <= %.3f\n",split_points[0].acc[1]);
+       fprintf (fp, "ACC_Z <= %.3f\n",split_points[0].acc[2]);
+     }
+     if (min_idx[num_idx] == 2 && min_idx[num_idx] == 3)
+     {
+       fprintf (fp, "ACC_Z <= %.3f\n",split_points[0].acc[2]);
+       fprintf (fp, "PRESS <= %.3f\n",split_points[0].press);
+     }
+     if (min_idx[num_idx] == 1 && min_idx[num_idx] == 3)
+     {
+       fprintf (fp, "ACC_Y <= %.3f\n",split_points[0].acc[1]);
+       fprintf (fp, "PRESS <= %.3f\n",split_points[0].press);
+     }
+     if (min_idx[num_idx] == 0 && min_idx[num_idx] == 3)
+     {
+       fprintf (fp, "ACC_X <= %.3f\n",split_points[0].acc[0]);
+       fprintf (fp, "PRESS <= %.3f\n",split_points[0].press);
+     }
+     if (min_idx[num_idx] == 0 && min_idx[num_idx] == 2)
+     {
+       fprintf (fp, "ACC_X <= %.3f\n",split_points[0].acc[0]);
+       fprintf (fp, "ACC_Z <= %.3f\n",split_points[0].acc[2]);
+     }
+     if (min_idx[num_idx] == 0 && min_idx[num_idx] == 1)
+     {
+       fprintf (fp, "ACC_X <= %.3f\n",split_points[0].acc[0]);
+       fprintf (fp, "ACC_Y <= %.3f\n",split_points[0].acc[1]);
+     }
+     break;
+   case 1:
+     snprintf(dataOut, MAX_BUF_SIZE, "\r\nFuck it.\r\n");
+     HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+     break;
+   }
+   snprintf(dataOut, MAX_BUF_SIZE, "\r\nnum idx: %d\r\n", num_idx);
+   HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+   
+   /* write 10 lines of text into the file stream */
+   for(i = 0; i < 10;i++){
+       fprintf (fp, "This is line %d\n",i + 1);
+   }
+ 
+   /* close the file */  
+   fclose (fp);
 }
 
  int main(void)
@@ -1105,21 +1233,55 @@ node_t * dec_tree_generator(labeled_record data[] /* nRecords is NUM_CALIB */)
   }
   
   record_t split_points = calculate_split_points(data, NUM_CALIB);
-  snprintf(dataOut, MAX_BUF_SIZE, "\r\nsplit: %.3f %.3f %.3f %.3f\r\n", split_points.acc[0], split_points.acc[1], split_points.acc[2], split_points.press);
+  snprintf(dataOut, MAX_BUF_SIZE, "Split points: %.3f %.3f %.3f %.3f", split_points.acc[0], split_points.acc[1], split_points.acc[2], split_points.press);
   HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
   Sleep_Mode();
   
+  float min_val = 1000000.0f;
+  int min_idx[4];
+  memset(min_idx, 0, sizeof(min_idx));
+  int num_idx = 0;
   float gini_scores[4];
-
-  for (int i = 0; i < 4; ++i)
+  
+  for (int i = 3; i >= 0; --i)
   {
     gini_scores[i] = compute_gini(data, NUM_CALIB, dim_data(&split_points, i), i);
+    if (gini_scores[i] < min_val)
+    {
+      min_val = gini_scores[i];
+    }
+
+    if (min_val == gini_scores[i])
+    {
+      min_idx[num_idx] = i;
+      num_idx += 1;
+    }
   }
-  
-  snprintf(dataOut, MAX_BUF_SIZE, "\r\ngini: %.3f %.3f %.3f %.3f\r\n", gini_scores[0], gini_scores[1], gini_scores[2], gini_scores[3]);
+  snprintf(dataOut, MAX_BUF_SIZE, "\r\nGini scores: %.3f %.3f %.3f %.3f\r\n", gini_scores[0], gini_scores[1], gini_scores[2], gini_scores[3]);
   HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
   
+  switch (num_idx)
+  {
+  case 4:
+    snprintf(dataOut, MAX_BUF_SIZE, "\r\nIndex with lowest cost: %d %d %d %d\r\n", min_idx[num_idx-1], min_idx[num_idx-2], min_idx[num_idx-3], min_idx[num_idx-4]);
+    HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+    break;
+  case 3:
+    snprintf(dataOut, MAX_BUF_SIZE, "\r\nIndex with lowest cost: %d %d %d\r\n", min_idx[num_idx-1], min_idx[num_idx-2], min_idx[num_idx-3]);
+    HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+    break;
+  case 2:
+    snprintf(dataOut, MAX_BUF_SIZE, "\r\nIndex with lowest cost: %d %d\r\n", min_idx[num_idx-1], min_idx[num_idx-2]);
+    HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+    break;
+  case 1:
+    snprintf(dataOut, MAX_BUF_SIZE, "\r\nIndex with lowest cost: %d\r\n", min_idx[num_idx-1]);
+    HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+    break;
+  } 
+  
   dec_tree_generator(data);
+  J48_output_maker(num_idx, min_idx, &split_points);
   
   /* Infinite loop */
   while (1)

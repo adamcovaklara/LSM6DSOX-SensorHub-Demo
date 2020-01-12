@@ -51,7 +51,7 @@ extern  I2C_HandleTypeDef I2C_EXPBD_Handle;
 #define KEY_BUTTON_GPIO_PORT     USER_BUTTON_GPIO_PORT
 #define KEY_BUTTON_EXTI_IRQn     USER_BUTTON_EXTI_IRQn
 #define BUTTONn                  1
-#define NUM_CALIB               4
+#define NUM_CALIB               10
 
 GPIO_TypeDef* BUTTON_PORT[BUTTONn] = {KEY_BUTTON_GPIO_PORT};
 const uint16_t BUTTON_PIN[BUTTONn] = {KEY_BUTTON_PIN};
@@ -498,8 +498,8 @@ record_t read_it_my_boy(void)
       uint8_t nRecords = accID > pressID ? pressID : accID;
       for (uint8_t k = 0; k < nRecords; ++k) {
         record_t * cur = &record[k];
-        snprintf(dataOut, MAX_BUF_SIZE, "Record number %d: acc.x: %.3f, acc.y: %.3f, acc.z: %.3f, pressure: %.3f\r\n",k+1, cur->acc[0], cur->acc[1], cur->acc[2], cur->press);
-        HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+//        snprintf(dataOut, MAX_BUF_SIZE, "Record number %d: acc.x: %.3f, acc.y: %.3f, acc.z: %.3f, pressure: %.3f\r\n",k+1, cur->acc[0], cur->acc[1], cur->acc[2], cur->press);
+//        HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
         records_mean.acc[0] += cur->acc[0];
         records_mean.acc[1] += cur->acc[1];
         records_mean.acc[2] += cur->acc[2];
@@ -511,8 +511,8 @@ record_t read_it_my_boy(void)
         records_mean.acc[2] /= nRecords;
         records_mean.press /= nRecords;
         
-        snprintf(dataOut, MAX_BUF_SIZE, "MEAN: acc.x: %.3f, acc.y: %.3f, acc.z: %.3f, pressure: %.3f\r\n\r\n", records_mean.acc[0], records_mean.acc[1], records_mean.acc[2], records_mean.press);
-        HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+//        snprintf(dataOut, MAX_BUF_SIZE, "MEAN: acc.x: %.3f, acc.y: %.3f, acc.z: %.3f, pressure: %.3f\r\n\r\n", records_mean.acc[0], records_mean.acc[1], records_mean.acc[2], records_mean.press);
+//        HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
                
       return records_mean;
     }
@@ -526,7 +526,6 @@ record_t read_it_my_boy(void)
  */
 static void Sleep_Mode(void)
 {
-  return;
   snprintf(dataOut, MAX_BUF_SIZE, "\r\n \r\n");
   HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
   SysTick->CTRL &= ~SysTick_CTRL_TICKINT_Msk; /* Systick IRQ OFF */
@@ -946,10 +945,10 @@ float compute_gini(const node_t * node, float split_point, int dim)
       }
     }
   }
-  snprintf(dataOut, MAX_BUF_SIZE, "\r\nDown GTE %d Down LT: %d\r\n", down_gte, down_lt);
-  HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
-  snprintf(dataOut, MAX_BUF_SIZE, "\r\nUp GTE %d Up LT: %d\r\n", up_gte, up_lt);
-  HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+//  snprintf(dataOut, MAX_BUF_SIZE, "\r\nDown GTE %d Down LT: %d\r\n", down_gte, down_lt);
+//  HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+//  snprintf(dataOut, MAX_BUF_SIZE, "\r\nUp GTE %d Up LT: %d\r\n", up_gte, up_lt);
+//  HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
   
   int num_down = down_gte + down_lt;
   float gini_down = 0;
@@ -958,8 +957,8 @@ float compute_gini(const node_t * node, float split_point, int dim)
     gini_down = 1 - square(down_lt / num_down) - square(down_gte / num_down);
   }
 
-snprintf(dataOut, MAX_BUF_SIZE, "\r\nGini DOWN: %.3f\r\n", gini_down);
-HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+//snprintf(dataOut, MAX_BUF_SIZE, "\r\nGini DOWN: %.3f\r\n", gini_down);
+//HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
   
   int num_up = up_gte + up_lt;
   float gini_up = 0;
@@ -968,8 +967,8 @@ HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMI
     gini_up = 1 - square(up_lt / num_up) - square(up_gte / num_up);
   }
   
-snprintf(dataOut, MAX_BUF_SIZE, "\r\nGini UP: %.3f\r\n", gini_up);
-HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+//snprintf(dataOut, MAX_BUF_SIZE, "\r\nGini UP: %.3f\r\n", gini_up);
+//HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
   
   return (gini_up * num_up + gini_down * num_down) / num_valid;
 }
@@ -993,7 +992,7 @@ void set_label(node_t * node)
   }
   // set label
   node->label = cntUp > cntDown;
-  node->error = (cntUp > cntDown ? cntDown : cntUp) / (cntUp + cntDown);
+  node->error = (cntUp > cntDown ? cntDown : cntUp) / (float)(cntUp + cntDown);
   
   node->cntUp = cntUp;
   node->cntDown = cntDown;
@@ -1003,7 +1002,7 @@ void split_node(node_t * node)
 {
   record_t split_points = calculate_split_points(node);
 
-  float min_val = 1.0f;
+  float min_val = 100.0f;
   uint8_t min_id = 255;
   
   for (int i = 3; i >= 0; --i)
@@ -1106,8 +1105,6 @@ node_t * dec_tree_generator(labeled_record data[] /* nRecords is NUM_CALIB */)
   {
     set_index(&(head->idx), i);
   }
- // snprintf(dataOut, MAX_BUF_SIZE, "\r\nHead: %.3f %.3f %.3f %.3f\r\n", head->data->data.acc[0], head->data->data.acc[1], head->data->data.acc[2], head->data->data.press);
-  //HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
   
   set_label(head);
   
@@ -1118,20 +1115,6 @@ node_t * dec_tree_generator(labeled_record data[] /* nRecords is NUM_CALIB */)
 
 void J48_output_maker(const node_t * node)
 {
-//  typedef struct node {
-//  float val; // split point
-//  uint8_t dim; // column where the data set is split
-//  uint8_t label;
-//  float error; // fraction of opposite labeled data points
-//  
-//  indexer idx; // stores which data points are for this node
-//  labeled_record * data; // p0inter to all data
-//  
-//  struct node * son; // left
-//  struct node * daughter; // right, women are always right
-//} node_t;
-
-
   if (node == NULL)
   {
     return;
@@ -1144,12 +1127,91 @@ void J48_output_maker(const node_t * node)
   }
   used_array[NUM_CALIB] = '\0';
   
-  snprintf(dataOut, MAX_BUF_SIZE, "\r\n Node addr: %p, son addr: %p, dght addr: %p, cntUp: %d, cntDown: %d, usedArray: %s\r\nSplit point: %.3f Split dim: %d Label: %s Error: %.3f\r\n",
+  uint8_t isLeaf = (node->son == NULL) && (node->daughter == NULL);
+  
+  snprintf(dataOut, MAX_BUF_SIZE, "\r\nNode addr: %p, son addr: %p, dght addr: %p, cntUp: %d, cntDown: %d, usedArray: %s\r\nSplit point: %.3f Split dim: %d Label: %s Error: %.3f\r\n",
            node, node->son, node->daughter, node->cntUp, node->cntDown, used_array, node->val, node->dim, (node->label ? "Up" : "Down"), node->error);
   HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
   
+  if (isLeaf)
+  {
+  snprintf(dataOut, MAX_BUF_SIZE, "Label: %s\r\n", (node->label ? "Up" : "Down"));
+  HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+  }
+  else
+  {
+  snprintf(dataOut, MAX_BUF_SIZE, "\r\nSplit dim: %d < Split point: %.3f\r\n", node->dim, node->val);
+  HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+  }
+  
   J48_output_maker(node->son);
   J48_output_maker(node->daughter);
+}
+
+const char * dim2text[4] = { "ACC_X",
+                             "ACC_Y",
+                             "ACC_Z",
+                             "PRESSURE" };
+
+void print_node_WEKA_J48(const node_t * node, int depth)
+{  
+  uint8_t isLeaf = node->son == node->daughter;//(node->son == NULL) && (node->daughter == NULL);
+  int length = 0;
+  memset(dataOut, 0, sizeof(dataOut));
+  
+  if (isLeaf)
+  {
+      int nRecords = node->cntDown + node->cntUp;
+      snprintf(dataOut, MAX_BUF_SIZE, ": %s (%d.0", (node->label ? "Up" : "Down"), nRecords);
+      length = strlen(dataOut);
+      
+      if (node->error != 0)
+      {
+        snprintf(dataOut + length, MAX_BUF_SIZE - length, "/%d.0)", (int)node->error * nRecords);
+      }
+      else
+      {
+        snprintf(dataOut + length, MAX_BUF_SIZE - length, ")");
+      }
+      HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+      return;
+  }
+  
+  // process left son first
+  if (node->son != NULL)
+  {
+    dataOut[length++] = '\r';
+    dataOut[length++] = '\n';
+    // indent first
+    for (int i = 0; i < depth; ++i)
+    {
+      dataOut[length++] = '|';
+      dataOut[length++] = '\t';
+    }
+    snprintf(dataOut + length, MAX_BUF_SIZE - length, "%s < %.03f", dim2text[node->dim], node->val);
+    HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+    
+    print_node_WEKA_J48(node->son, depth + 1);
+  }
+  
+  // process the right one
+  if (node->daughter != NULL)
+  {
+    length = 0;
+    memset(dataOut, 0, sizeof(dataOut));
+    dataOut[length++] = '\r';
+    dataOut[length++] = '\n';
+    // indent first
+    for (int i = 0; i < depth; ++i)
+    {
+      dataOut[length++] = '|';
+      dataOut[length++] = '\t';
+    }
+    snprintf(dataOut + length, MAX_BUF_SIZE - length, "%s >= %.03f", dim2text[node->dim], node->val);
+    HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+    
+    print_node_WEKA_J48(node->daughter, depth + 1);
+  }
 }
 
  int main(void)
@@ -1180,6 +1242,7 @@ void J48_output_maker(const node_t * node)
     HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
   }
   J48_output_maker(head);
+  print_node_WEKA_J48(head, 0);
   
   Sleep_Mode();
   

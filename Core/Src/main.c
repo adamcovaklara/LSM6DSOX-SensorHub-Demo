@@ -27,10 +27,10 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
-#include "C:\IKS0LAB_SensorHub-modified\IKS0LAB_SensorHub\Drivers\lps22hh\lps22hh.h"
-#include "C:\IKS0LAB_SensorHub-modified\IKS0LAB_SensorHub\Drivers\lps22hh\lps22hh_reg.h"
-#include "C:\IKS0LAB_SensorHub-modified\IKS0LAB_SensorHub\Drivers\lsm6dsox\lsm6dsox.h"
-#include "C:\IKS0LAB_SensorHub-modified\IKS0LAB_SensorHub\Drivers\lsm6dsox\lsm6dsox_reg.h"
+#include "C:\IKS0LAB_SensorHub\Drivers\lps22hh\lps22hh.h"
+#include "C:\IKS0LAB_SensorHub\Drivers\lps22hh\lps22hh_reg.h"
+#include "C:\IKS0LAB_SensorHub\Drivers\lsm6dsox\lsm6dsox.h"
+#include "C:\IKS0LAB_SensorHub\Drivers\lsm6dsox\lsm6dsox_reg.h"
 
 /* Private typedef -----------------------------------------------------------*/
 extern  I2C_HandleTypeDef I2C_EXPBD_Handle;
@@ -51,7 +51,7 @@ extern  I2C_HandleTypeDef I2C_EXPBD_Handle;
 #define KEY_BUTTON_GPIO_PORT     USER_BUTTON_GPIO_PORT
 #define KEY_BUTTON_EXTI_IRQn     USER_BUTTON_EXTI_IRQn
 #define BUTTONn                  1
-#define NUM_CALIB               10
+#define NUM_CALIB               4
 
 GPIO_TypeDef* BUTTON_PORT[BUTTONn] = {KEY_BUTTON_GPIO_PORT};
 const uint16_t BUTTON_PIN[BUTTONn] = {KEY_BUTTON_PIN};
@@ -106,6 +106,11 @@ typedef struct record {
   float acc[3];
   float press;
 } record_t;
+
+typedef struct fifo_record {
+  record_t fifo[NUM_RECORDS];
+  record_t mean;
+} fifo_record_t;
 
 typedef struct labeled_record {
   record_t data;
@@ -173,8 +178,8 @@ static void USART2_MspInit(UART_HandleTypeDef *huart);
 void  BSP_PB_Init(Button_TypeDef Button, ButtonMode_TypeDef ButtonMode);
 void USARTConfig(void);
 void ErrorHandler(void);
-record_t read_it_my_boy(void);
-void class_it_my_boy(float max, float min, int idx_max, int idx_min);
+fifo_record_t read_it_my_boy(void);
+// void class_it_my_boy(float max, float min, int idx_max, int idx_min);
 record_t compute_mean(const node_t * node, char label);
 record_t compute_std(const node_t * node, record_t records_mean, char label);
 float compute_gini(const node_t * node, float split_point, int dim);
@@ -249,29 +254,29 @@ void lsm6dsox_hub_fifo_lps22hh(void)
   return;
 }
 
-void class_it_my_boy(float max, float min, int idx_max, int idx_min)
-{
-  float tsh = 0.05f;
-    
-  if ((max - min) >= tsh)
-  {
-    if (idx_min > idx_max)
-    {
-      snprintf(dataOut, MAX_BUF_SIZE, "\r\nCLASSIFIED MLC: UP\r\n");
-      HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
-    }
-    else
-    {
-      snprintf(dataOut, MAX_BUF_SIZE, "\r\nCLASSIFIED MLC: DOWN\r\n");
-      HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
-    }
-  }
-  else
-  {
-    snprintf(dataOut, MAX_BUF_SIZE, "\r\nCLASSIFIED MLC: SAME\r\n");
-    HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
-  }
-}
+//void class_it_my_boy(float max, float min, int idx_max, int idx_min)
+//{
+//  float tsh = 0.05f;
+//    
+//  if ((max - min) >= tsh)
+//  {
+//    if (idx_min > idx_max)
+//    {
+//      snprintf(dataOut, MAX_BUF_SIZE, "\r\nCLASSIFIED MLC: UP\r\n");
+//      HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+//    }
+//    else
+//    {
+//      snprintf(dataOut, MAX_BUF_SIZE, "\r\nCLASSIFIED MLC: DOWN\r\n");
+//      HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+//    }
+//  }
+//  else
+//  {
+//    snprintf(dataOut, MAX_BUF_SIZE, "\r\nCLASSIFIED MLC: SAME\r\n");
+//    HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+//  }
+//}
 
 char getUserInput(UART_HandleTypeDef *huart, char * welcomeMSG, char * validOptions)
 {
@@ -375,12 +380,16 @@ record_t compute_std(const node_t * node, record_t records_mean, char label)
   return records_std;
 }
 
-record_t read_it_my_boy(void)
+fifo_record_t read_it_my_boy(void)
 {
   static const int watermark = 3 * NUM_RECORDS;
   record_t record[NUM_RECORDS]; 
   record_t records_mean;
   memset(&records_mean, 0, sizeof(records_mean));
+  record_t fifo_samples;
+  memset(&fifo_samples, 0, sizeof(fifo_samples));
+  fifo_record_t output;
+  memset(&output, 0, sizeof(output));
  
   uint8_t wtm_flag;
   lsm6dsox_pin_int1_route_t int1_route;
@@ -414,14 +423,14 @@ record_t read_it_my_boy(void)
 
   /*
    * Enable FIFO batching of Slave0.
-   * ODR batching is 13 Hz.
+   * ODR batching is 52 Hz.
    */
   lsm6dsox_sh_batch_slave_0_set(&ag_ctx, PROPERTY_ENABLE);
-  lsm6dsox_sh_data_rate_set(&ag_ctx, LSM6DSOX_SH_ODR_13Hz);
+  lsm6dsox_sh_data_rate_set(&ag_ctx, LSM6DSOX_SH_ODR_52Hz);
 
-  /* Set FIFO batch XL/Gyro ODR to 12.5Hz. */
-  lsm6dsox_fifo_xl_batch_set(&ag_ctx, LSM6DSOX_XL_BATCHED_AT_12Hz5);
-  lsm6dsox_fifo_gy_batch_set(&ag_ctx, LSM6DSOX_GY_BATCHED_AT_12Hz5);
+  /* Set FIFO batch XL/Gyro ODR to 52 [Hz]. */
+  lsm6dsox_fifo_xl_batch_set(&ag_ctx, LSM6DSOX_XL_BATCHED_AT_52Hz);
+  lsm6dsox_fifo_gy_batch_set(&ag_ctx, LSM6DSOX_GY_BATCHED_AT_52Hz);
 
   /*
    * Prepare sensor hub to read data from external Slave0 continuously
@@ -440,8 +449,8 @@ record_t read_it_my_boy(void)
   lsm6dsox_xl_full_scale_set(&ag_ctx, LSM6DSOX_2g);
   lsm6dsox_gy_full_scale_set(&ag_ctx, LSM6DSOX_2000dps);
   lsm6dsox_block_data_update_set(&ag_ctx, PROPERTY_ENABLE);
-  lsm6dsox_xl_data_rate_set(&ag_ctx, LSM6DSOX_XL_ODR_12Hz5);
-  lsm6dsox_gy_data_rate_set(&ag_ctx, LSM6DSOX_GY_ODR_12Hz5);
+  lsm6dsox_xl_data_rate_set(&ag_ctx, LSM6DSOX_XL_ODR_52Hz);
+  lsm6dsox_gy_data_rate_set(&ag_ctx, LSM6DSOX_GY_ODR_52Hz);
 
   while(1) {
     uint16_t num = 0, test = 0;
@@ -500,6 +509,12 @@ record_t read_it_my_boy(void)
         record_t * cur = &record[k];
 //        snprintf(dataOut, MAX_BUF_SIZE, "Record number %d: acc.x: %.3f, acc.y: %.3f, acc.z: %.3f, pressure: %.3f\r\n",k+1, cur->acc[0], cur->acc[1], cur->acc[2], cur->press);
 //        HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+        
+        output.fifo[k].acc[0] = cur->acc[0];
+        output.fifo[k].acc[1] = cur->acc[1];
+        output.fifo[k].acc[2] = cur->acc[2];
+        output.fifo[k].press = cur->press;
+
         records_mean.acc[0] += cur->acc[0];
         records_mean.acc[1] += cur->acc[1];
         records_mean.acc[2] += cur->acc[2];
@@ -514,7 +529,8 @@ record_t read_it_my_boy(void)
 //        snprintf(dataOut, MAX_BUF_SIZE, "MEAN: acc.x: %.3f, acc.y: %.3f, acc.z: %.3f, pressure: %.3f\r\n\r\n", records_mean.acc[0], records_mean.acc[1], records_mean.acc[2], records_mean.press);
 //        HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
                
-      return records_mean;
+        output.mean = records_mean;
+        return output;
     }
   }
 }
@@ -726,7 +742,7 @@ static int32_t lsm6dsox_write_lps22hh_cx(void* ctx, uint8_t reg, uint8_t* data,
   lsm6dsox_sh_master_set(&ag_ctx, PROPERTY_ENABLE);
 
   /* Enable accelerometer to trigger Sensor Hub operation. */
-  lsm6dsox_xl_data_rate_set(&ag_ctx, LSM6DSOX_XL_ODR_104Hz);
+  lsm6dsox_xl_data_rate_set(&ag_ctx, LSM6DSOX_XL_ODR_52Hz);
 
   /* Wait Sensor Hub operation flag set. */
   lsm6dsox_acceleration_raw_get(&ag_ctx, data_raw_acceleration.u8bit);
@@ -782,7 +798,7 @@ static int32_t lsm6dsox_read_lps22hh_cx(void* ctx, uint8_t reg, uint8_t* data,
    lsm6dsox_sh_master_set(&ag_ctx, PROPERTY_ENABLE);
 
   /* Enable accelerometer to trigger Sensor Hub operation. */
-  lsm6dsox_xl_data_rate_set(&ag_ctx, LSM6DSOX_XL_ODR_104Hz);
+  lsm6dsox_xl_data_rate_set(&ag_ctx, LSM6DSOX_XL_ODR_52Hz);
 
   /* Wait Sensor Hub operation flag set. */
   lsm6dsox_acceleration_raw_get(&ag_ctx, data_raw_acceleration.u8bit);
@@ -874,6 +890,7 @@ float get_split_point(float m1, float m2, float o1, float o2)
     
     return m1 + tmp * dist;
 }
+
 record_t calculate_split_points(node_t * node)
 {
   record_t res;
@@ -998,14 +1015,27 @@ void set_label(node_t * node)
   node->cntDown = cntDown;
 }
 
-void split_node(node_t * node)
+void split_node(node_t * node, int iteration)
 {
+  snprintf(dataOut, MAX_BUF_SIZE, "\r\nNode label: %d, son label: %d, dght label: %d",
+           node->label, node->son->label, node->daughter->label);
+  HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+  snprintf(dataOut, MAX_BUF_SIZE, "\r\nNode val: %.3f, son val: %.3f, dght val: %.3f",
+           node->val, node->son->val, node->daughter->val);
+  HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+
+  if (node->label == node->son->label || node->label == node->daughter->label)
+    return;
+  
+  if (node->val == node->son->val || node->val == node->daughter->val)
+    return;
+  
   record_t split_points = calculate_split_points(node);
 
   float min_val = 100.0f;
   uint8_t min_id = 255;
   
-  for (int i = 3; i >= 0; --i)
+  for (int i = 3 - iteration; i >= 0; --i)
   {
     float gini_cur = compute_gini(node, dim_data(&split_points, i), i);
     if (gini_cur < min_val)
@@ -1014,6 +1044,8 @@ void split_node(node_t * node)
       min_id = i;
     }
   }
+  
+  if (min_id == 3) iteration = 1;
   
   node->dim = min_id;
   node->val = dim_data(&split_points, min_id); // split point
@@ -1087,12 +1119,12 @@ void split_node(node_t * node)
     
    if (node->son != NULL && node->son->error > 0)
    {
-     split_node(node->son);
+     split_node(node->son, iteration);
    }
    
    if (node->daughter != NULL && node->daughter->error > 0)
    {
-     split_node(node->daughter);
+     split_node(node->daughter, iteration);
    }
 }
 
@@ -1108,7 +1140,7 @@ node_t * dec_tree_generator(labeled_record data[] /* nRecords is NUM_CALIB */)
   
   set_label(head);
   
-  split_node(head);
+  split_node(head, 0);
   
   return head;
 }
@@ -1223,7 +1255,7 @@ void print_node_WEKA_J48(const node_t * node, int depth)
   for (int i = 0; i < NUM_CALIB; ++i)
   {
     /* _NOTE_: Pushing button creates interrupt/event and wakes up MCU from sleep mode */
-    data[i].data = read_it_my_boy();
+    data[i].data = read_it_my_boy().mean;
     char tmp = getUserInput(&UartHandle, "For down type 'D', for up 'U'.", "DUdu");
     
     if (tolower(tmp) == 'u')
@@ -1241,44 +1273,84 @@ void print_node_WEKA_J48(const node_t * node, int depth)
     snprintf(dataOut, MAX_BUF_SIZE, "\r\n data[%d] = (%.3f, %.3f, %.3f, %.3f, label: %d)", i, data[i].data.acc[0], data[i].data.acc[1], data[i].data.acc[2], data[i].data.press, data[i].label);
     HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
   }
+      
   J48_output_maker(head);
   print_node_WEKA_J48(head, 0);
   
   Sleep_Mode();
   
+  // enable MLC & set ODR to 52 [Hz]
+  lsm6dsox_mlc_set(&ag_ctx, 1);
+  lsm6dsox_mlc_data_rate_set(&ag_ctx, LSM6DSOX_ODR_PRGS_52Hz);
+  
+  // set MLC status interrupt on pin2
+  lsm6dsox_pin_int2_route_t interrupt;
+  interrupt.mlc_int2.int2_mlc1 = 0;
+  lsm6dsox_pin_int2_route_get(&ag_ctx, &interrupt);
+  
+  fifo_record_t data_out;
+  memset(&data_out, 0, sizeof(fifo_record_t));    
+  int reg2 = 0;
+      
   /* Infinite loop */
   while (1)
   {
-    if (button_pressed)
+    // get MLC status register
+    lsm6dsox_mlc_status_mainpage_t status;
+    int reg1 = lsm6dsox_mlc_status_get(&ag_ctx,&status);
+    reg1 = status.is_mlc1;
+      
+    if (reg2 != reg1 || interrupt.mlc_int2.int2_mlc1)
     {
-      /* _NOTE_: Pushing button creates interrupt/event and wakes up MCU from sleep mode */
-      record_t data[3];
-      memset(&data, 0, sizeof(data));
-      
-      float min = 1000000.0f;
-      float max = 0.0f;
-      int idx_min = 0;
-      int idx_max = 0;
-      
-      for (int i = 0; i < 3; ++i)
+      snprintf(dataOut, MAX_BUF_SIZE, "\r\n MLC status register: %d", status.is_mlc1);
+      HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+      snprintf(dataOut, MAX_BUF_SIZE, "\r\n Interrupt: %d", interrupt.mlc_int2.int2_mlc1);
+      HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+    }
+    
+    reg2 = reg1;
+    
+    if (button_pressed)
+    {  
+      data_out = read_it_my_boy();
+              
+      for (int i = 0; i < NUM_RECORDS; ++i)
       {
-        data[i] = read_it_my_boy();
-        if (data[i].press > max)
-        {
-          max = data[i].press;
-          idx_max = i;
-        }
-        if (data[i].press < min)
-        {
-          min = data[i].press;
-          idx_min = i;
-        }
+        snprintf(dataOut, MAX_BUF_SIZE, "\r\n data[%d] = (%.3f, %.3f, %.3f, %.3f)", i, data_out.fifo[i].acc[0], data_out.fifo[i].acc[1], data_out.fifo[i].acc[2], data_out.fifo[i].press);
+        HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
       }
       
-      snprintf(dataOut, MAX_BUF_SIZE, "\r\nPEAK TO PEAK: %f\r\n", (max - min));
+      snprintf(dataOut, MAX_BUF_SIZE, "\r\n");
       HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
       
-      class_it_my_boy(max, min, idx_max, idx_min);
+      /* _NOTE_: Pushing button creates interrupt/event and wakes up MCU from sleep mode */
+//      record_t data[3];
+//      memset(&data, 0, sizeof(data));
+//      
+//      float min = 1000000.0f;
+//      float max = 0.0f;
+//      int idx_min = 0;
+//      int idx_max = 0;
+//      
+//      for (int i = 0; i < 3; ++i)
+//      {
+//        data[i] = read_it_my_boy();
+//        if (data[i].press > max)
+//        {
+//          max = data[i].press;
+//          idx_max = i;
+//        }
+//        if (data[i].press < min)
+//        {
+//          min = data[i].press;
+//          idx_min = i;
+//        }
+//      }
+//      
+//      snprintf(dataOut, MAX_BUF_SIZE, "\r\nPEAK TO PEAK: %f\r\n", (max - min));
+//      HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+//      
+//      class_it_my_boy(max, min, idx_max, idx_min);
       
       /* Reset FIFO by setting FIFO mode to Bypass */
       lsm6dsox_fifo_mode_set(&ag_ctx, LSM6DSOX_BYPASS_MODE);

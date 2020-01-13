@@ -1286,10 +1286,10 @@ void print_node_WEKA_J48(const node_t * node, int depth)
   // set MLC status interrupt on pin2
   lsm6dsox_pin_int2_route_t interrupt;
   interrupt.mlc_int2.int2_mlc1 = 0;
-  lsm6dsox_pin_int2_route_get(&ag_ctx, &interrupt);
+  lsm6dsox_pin_int2_route_set(&ag_ctx, &interrupt);
   
   fifo_record_t data_out;
-  memset(&data_out, 0, sizeof(fifo_record_t));    
+  memset(&data_out, 0, sizeof(fifo_record_t));
   int reg2 = 0;
       
   /* Infinite loop */
@@ -1299,6 +1299,7 @@ void print_node_WEKA_J48(const node_t * node, int depth)
     lsm6dsox_mlc_status_mainpage_t status;
     int reg1 = lsm6dsox_mlc_status_get(&ag_ctx,&status);
     reg1 = status.is_mlc1;
+    lsm6dsox_pin_int2_route_get(&ag_ctx, &interrupt);
       
     if (reg2 != reg1 || interrupt.mlc_int2.int2_mlc1)
     {
@@ -1311,10 +1312,10 @@ void print_node_WEKA_J48(const node_t * node, int depth)
     reg2 = reg1;
     
     if (button_pressed)
-    {  
+    {        
       data_out = read_it_my_boy();
               
-      for (int i = 0; i < NUM_RECORDS; ++i)
+      for (int i = 0; i < NUM_RECORDS; i++)
       {
         snprintf(dataOut, MAX_BUF_SIZE, "\r\n data[%d] = (%.3f, %.3f, %.3f, %.3f)", i, data_out.fifo[i].acc[0], data_out.fifo[i].acc[1], data_out.fifo[i].acc[2], data_out.fifo[i].press);
         HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);

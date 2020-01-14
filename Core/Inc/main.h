@@ -64,6 +64,9 @@ void Error_Handler(void);
 #define B1_GPIO_Port GPIOC
 #define B1_EXTI_IRQn EXTI15_10_IRQn
 #define INT1_master_Pin GPIO_PIN_0
+#define INT2_master_Pin GPIO_PIN_1
+#define INT2_master_GPIO_Port GPIOC
+#define INT2_master_EXTI_IRQn EXTI1_IRQn
 #define INT1_master_GPIO_Port GPIOC
 #define INT1_master_EXTI_IRQn EXTI0_IRQn
 #define USART_TX_Pin GPIO_PIN_2

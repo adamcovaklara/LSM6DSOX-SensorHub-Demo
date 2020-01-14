@@ -27,10 +27,10 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
-#include "C:\IKS0LAB_SensorHub\Drivers\lps22hh\lps22hh.h"
-#include "C:\IKS0LAB_SensorHub\Drivers\lps22hh\lps22hh_reg.h"
-#include "C:\IKS0LAB_SensorHub\Drivers\lsm6dsox\lsm6dsox.h"
-#include "C:\IKS0LAB_SensorHub\Drivers\lsm6dsox\lsm6dsox_reg.h"
+#include "C:\IKS0LAB_SensorHub-modified\IKS0LAB_SensorHub\Drivers\lps22hh\lps22hh.h"
+#include "C:\IKS0LAB_SensorHub-modified\IKS0LAB_SensorHub\Drivers\lps22hh\lps22hh_reg.h"
+#include "C:\IKS0LAB_SensorHub-modified\IKS0LAB_SensorHub\Drivers\lsm6dsox\lsm6dsox.h"
+#include "C:\IKS0LAB_SensorHub-modified\IKS0LAB_SensorHub\Drivers\lsm6dsox\lsm6dsox_reg.h"
 
 /* Private typedef -----------------------------------------------------------*/
 extern  I2C_HandleTypeDef I2C_EXPBD_Handle;
@@ -157,7 +157,7 @@ typedef struct node {
   uint8_t dim; // column where the data set is split
   uint8_t label;
   float error; // fraction of opposite labeled data points
-  int cntUp, cntDown;
+  int cnt[4];
   
   indexer idx; // stores which data points are for this node
   labeled_record * data; // p0inter to all data
@@ -963,36 +963,60 @@ static float square(float val)
 
 float compute_gini(const node_t * node, float split_point, int dim)
 {
-  int up_lt = 0, down_lt = 0, up_gte = 0, down_gte = 0;
+  int wk_hor = 0, wk_ver = 0, fl_hor = 0, fl_ver = 0;
   int num_valid = 0;
   
   for (int i = 0; i < NUM_CALIB; ++i)
   {
     if (!is_used(&(node->idx), i))
     {continue;}
-        
+        // 0 means moving walking horizontally, 1 walking vertically, 2 means flying horizontally, 3 means flying vertically 
     num_valid += 1;
         
     if (dim_data(&node->data[i].data, dim) < split_point)
     {
-      if (node->data[i].label == 1) // up
+      if (node->data[i].label == 0) // down
       {
-        ++up_lt;
+        ++wk_hor;
       }
       else
       {
-        ++down_lt;
+        ++wk_ver;
+        ++fl_hor;
+        ++fl_ver;
       }
-    }
-    else 
-    {
-      if (node->data[i].label == 1) // up
+      
+      if (node->data[i].label == 1) // down
       {
-        ++up_gte;
+        ++wk_ver;
       }
       else
       {
-        ++down_gte;
+        ++wk_hor;
+        ++fl_hor;
+        ++fl_ver;
+      }
+      
+      if (node->data[i].label == 2) // up
+      {
+        ++fl_hor;
+      }
+      else
+      {
+        ++wk_hor;
+        ++wk_ver;
+        ++fl_ver;
+        
+      }
+      if (node->data[i].label == 3) // up
+      {
+        ++fl_ver;
+      }
+      else
+      {
+        ++wk_hor;
+        ++fl_hor;
+        ++wk_ver;
       }
     }
   }
@@ -1001,52 +1025,53 @@ float compute_gini(const node_t * node, float split_point, int dim)
 //  snprintf(dataOut, MAX_BUF_SIZE, "\r\nUp GTE %d Up LT: %d\r\n", up_gte, up_lt);
 //  HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
   
-  int num_down = down_gte + down_lt;
-  float gini_down = 0;
-  if (num_down > 0)
+  int num_wk = wk_hor + wk_ver;
+  float gini_wk = 0;
+  if (num_wk > 0)
   {
-    gini_down = 1 - square(down_lt / num_down) - square(down_gte / num_down);
+    gini_wk = 1 - square(wk_ver / num_wk) - square(wk_hor / num_wk);
   }
 
 //snprintf(dataOut, MAX_BUF_SIZE, "\r\nGini DOWN: %.3f\r\n", gini_down);
 //HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
   
-  int num_up = up_gte + up_lt;
-  float gini_up = 0;
-  if (num_up > 0)
+  int num_fl = fl_hor + fl_ver;
+  float gini_fl = 0;
+  if (num_fl > 0)
   {
-    gini_up = 1 - square(up_lt / num_up) - square(up_gte / num_up);
+    gini_fl = 1 - square(fl_hor / num_fl) - square(fl_ver / num_fl);
   }
   
 //snprintf(dataOut, MAX_BUF_SIZE, "\r\nGini UP: %.3f\r\n", gini_up);
 //HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
   
-  return (gini_up * num_up + gini_down * num_down) / num_valid;
+  return (gini_wk * num_wk + gini_fl * num_fl) / num_valid;
 }
 
 void set_label(node_t * node)
 {
-  int cntUp = 0, cntDown = 0;
+  // 0 means moving walking horizontally, 1 walking vertically, 2 means flying horizontally, 3 means flying vertically 
+  int array[4] = {0, 0, 0, 0};
   for (int i = 0; i < NUM_CALIB; ++i)
   {
     if (is_used(&(node->idx), i))
     {
-      if (node->data[i].label == 0)
-      {
-        ++cntDown;
-      }
-      else
-      {
-        ++cntUp;
-      }
+      ++array[node->data[i].label];
     }
   }
   // set label
-  node->label = cntUp > cntDown;
-  node->error = (cntUp > cntDown ? cntDown : cntUp) / (float)(cntUp + cntDown);
-  
-  node->cntUp = cntUp;
-  node->cntDown = cntDown;
+  int max_val = 0, sum = 0;
+  for (int i = 0; i < 4; i++)
+  {
+    sum += array[i];
+    if (array[i] > max_val)
+    {
+      max_val = array[i];
+      node->label = i;
+    }
+    node->cnt[i] = array[i];
+  }
+  node->error = (float)(sum - max_val) / sum;
 }
 
 void split_node(node_t * node)
@@ -1240,6 +1265,14 @@ const char * dim2text[4] = { "ACC_X",
                              "ACC_Z",
                              "PRESSURE" };
 
+int sumator(const node_t * node)
+{
+  int sum = 0;
+  for (int i = 0; i < 4; i++)
+      sum += node->cnt[i];
+  return sum;
+}
+
 void print_node_WEKA_J48(const node_t * node, int depth)
 {  
   uint8_t isLeaf = node->son == node->daughter; //(node->son == NULL) && (node->daughter == NULL);
@@ -1247,8 +1280,8 @@ void print_node_WEKA_J48(const node_t * node, int depth)
   memset(dataOut, 0, sizeof(dataOut));
   
   if (isLeaf)
-  {
-      int nRecords = node->cntDown + node->cntUp;
+  {    
+      int nRecords = sumator(node);
       static const char *classified[] = {"Walking horizontally","Walking vertically","Flying horizontally","Flying vertically" };
       char text[20];
       
@@ -1330,33 +1363,7 @@ void print_node_WEKA_J48(const node_t * node, int depth)
     /* _NOTE_: Pushing button creates interrupt/event and wakes up MCU from sleep mode */
     data[i].data = read_it_my_boy().mean;
     char tmp = getUserInput(&UartHandle, "For walking horizontally type '0', for walking vertically type '1'. For flying horizontally type '2', for flying vertically type '3'.", "0123");
-        
-//    for (int k = 0; k < 4; k++)
-//    {
-//      if ((tmp) == (char)k)
-//      {
-//        data[i].label = k; // default is down (0)
-//        snprintf(dataOut, MAX_BUF_SIZE, "\r\nLabel1: %d \r\n", k);
-//        HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
-//      }
-//    }
-    
-    if ((tmp) == '0')
-    {
-      data[i].label = 0; // default is down (0)
-    }
-    if ((tmp) == '1')
-    {
-      data[i].label = 1; // default is down (0)
-    }
-    if ((tmp) == '2')
-    {
-      data[i].label = 2; // default is down (0)
-    }
-    if ((tmp) == '3')
-    {
-      data[i].label = 3; // default is down (0)
-    }
+    data[i].label = tmp - '0'; // default is down (0)
     
     static const char *classified[] = {"Walking horizontally","Walking vertically","Flying horizontally","Flying vertically" };
     char text[20];

@@ -36,10 +36,10 @@
 extern  I2C_HandleTypeDef I2C_EXPBD_Handle;
 
 /* Private define ------------------------------------------------------------*/
-#define NUM_RECORDS            10
-#define MAX_BUF_SIZE           256
-#define UART_TRANSMIT_TIMEOUT   5000
-#define TX_BUF_DIM             1000
+#define NUM_RECORDS              10
+#define MAX_BUF_SIZE             256
+#define UART_TRANSMIT_TIMEOUT    5000
+#define TX_BUF_DIM               1000
 #define USE_STM32F4XX_NUCLEO
 #define BSP_ERROR_NONE           0
 #define BSP_ERROR_WRONG_PARAM    -2
@@ -51,7 +51,7 @@ extern  I2C_HandleTypeDef I2C_EXPBD_Handle;
 #define KEY_BUTTON_GPIO_PORT     USER_BUTTON_GPIO_PORT
 #define KEY_BUTTON_EXTI_IRQn     USER_BUTTON_EXTI_IRQn
 #define BUTTONn                  1
-#define NUM_CALIB               4
+#define NUM_CALIB                10
 
 GPIO_TypeDef* BUTTON_PORT[BUTTONn] = {KEY_BUTTON_GPIO_PORT};
 const uint16_t BUTTON_PIN[BUTTONn] = {KEY_BUTTON_PIN};
@@ -165,6 +165,7 @@ static stmdev_ctx_t ag_ctx;
 
 /* Volatile variables */
 static volatile uint8_t button_pressed = 0;
+static volatile uint8_t MLC_interrupt = 0;
 volatile uint32_t Int_Current_Time1 = 0; /*!< Int_Current_Time1 Value */
 volatile uint32_t Int_Current_Time2 = 0; /*!< Int_Current_Time2 Value */
 
@@ -423,14 +424,14 @@ fifo_record_t read_it_my_boy(void)
 
   /*
    * Enable FIFO batching of Slave0.
-   * ODR batching is 52 Hz.
+   * ODR batching is 13 Hz.
    */
   lsm6dsox_sh_batch_slave_0_set(&ag_ctx, PROPERTY_ENABLE);
-  lsm6dsox_sh_data_rate_set(&ag_ctx, LSM6DSOX_SH_ODR_52Hz);
+  lsm6dsox_sh_data_rate_set(&ag_ctx, LSM6DSOX_SH_ODR_13Hz);
 
-  /* Set FIFO batch XL/Gyro ODR to 52 [Hz]. */
-  lsm6dsox_fifo_xl_batch_set(&ag_ctx, LSM6DSOX_XL_BATCHED_AT_52Hz);
-  lsm6dsox_fifo_gy_batch_set(&ag_ctx, LSM6DSOX_GY_BATCHED_AT_52Hz);
+  /* Set FIFO batch XL/Gyro ODR to 12.5 [Hz]. */
+  lsm6dsox_fifo_xl_batch_set(&ag_ctx, LSM6DSOX_XL_BATCHED_AT_12Hz5);
+  lsm6dsox_fifo_gy_batch_set(&ag_ctx, LSM6DSOX_GY_BATCHED_AT_12Hz5);
 
   /*
    * Prepare sensor hub to read data from external Slave0 continuously
@@ -449,8 +450,8 @@ fifo_record_t read_it_my_boy(void)
   lsm6dsox_xl_full_scale_set(&ag_ctx, LSM6DSOX_2g);
   lsm6dsox_gy_full_scale_set(&ag_ctx, LSM6DSOX_2000dps);
   lsm6dsox_block_data_update_set(&ag_ctx, PROPERTY_ENABLE);
-  lsm6dsox_xl_data_rate_set(&ag_ctx, LSM6DSOX_XL_ODR_52Hz);
-  lsm6dsox_gy_data_rate_set(&ag_ctx, LSM6DSOX_GY_ODR_52Hz);
+  lsm6dsox_xl_data_rate_set(&ag_ctx, LSM6DSOX_XL_ODR_12Hz5);
+  lsm6dsox_gy_data_rate_set(&ag_ctx, LSM6DSOX_GY_ODR_12Hz5);
 
   while(1) {
     uint16_t num = 0, test = 0;
@@ -742,7 +743,7 @@ static int32_t lsm6dsox_write_lps22hh_cx(void* ctx, uint8_t reg, uint8_t* data,
   lsm6dsox_sh_master_set(&ag_ctx, PROPERTY_ENABLE);
 
   /* Enable accelerometer to trigger Sensor Hub operation. */
-  lsm6dsox_xl_data_rate_set(&ag_ctx, LSM6DSOX_XL_ODR_52Hz);
+  lsm6dsox_xl_data_rate_set(&ag_ctx, LSM6DSOX_XL_ODR_104Hz);
 
   /* Wait Sensor Hub operation flag set. */
   lsm6dsox_acceleration_raw_get(&ag_ctx, data_raw_acceleration.u8bit);
@@ -798,7 +799,7 @@ static int32_t lsm6dsox_read_lps22hh_cx(void* ctx, uint8_t reg, uint8_t* data,
    lsm6dsox_sh_master_set(&ag_ctx, PROPERTY_ENABLE);
 
   /* Enable accelerometer to trigger Sensor Hub operation. */
-  lsm6dsox_xl_data_rate_set(&ag_ctx, LSM6DSOX_XL_ODR_52Hz);
+  lsm6dsox_xl_data_rate_set(&ag_ctx, LSM6DSOX_XL_ODR_104Hz);
 
   /* Wait Sensor Hub operation flag set. */
   lsm6dsox_acceleration_raw_get(&ag_ctx, data_raw_acceleration.u8bit);
@@ -1015,27 +1016,14 @@ void set_label(node_t * node)
   node->cntDown = cntDown;
 }
 
-void split_node(node_t * node, int iteration)
-{
-  snprintf(dataOut, MAX_BUF_SIZE, "\r\nNode label: %d, son label: %d, dght label: %d",
-           node->label, node->son->label, node->daughter->label);
-  HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
-  snprintf(dataOut, MAX_BUF_SIZE, "\r\nNode val: %.3f, son val: %.3f, dght val: %.3f",
-           node->val, node->son->val, node->daughter->val);
-  HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
-
-  if (node->label == node->son->label || node->label == node->daughter->label)
-    return;
-  
-  if (node->val == node->son->val || node->val == node->daughter->val)
-    return;
-  
+void split_node(node_t * node)
+{  
   record_t split_points = calculate_split_points(node);
 
   float min_val = 100.0f;
   uint8_t min_id = 255;
   
-  for (int i = 3 - iteration; i >= 0; --i)
+  for (int i = 3; i >= 0; --i)
   {
     float gini_cur = compute_gini(node, dim_data(&split_points, i), i);
     if (gini_cur < min_val)
@@ -1044,8 +1032,6 @@ void split_node(node_t * node, int iteration)
       min_id = i;
     }
   }
-  
-  if (min_id == 3) iteration = 1;
   
   node->dim = min_id;
   node->val = dim_data(&split_points, min_id); // split point
@@ -1119,12 +1105,12 @@ void split_node(node_t * node, int iteration)
     
    if (node->son != NULL && node->son->error > 0)
    {
-     split_node(node->son, iteration);
+     split_node(node->son);
    }
    
    if (node->daughter != NULL && node->daughter->error > 0)
    {
-     split_node(node->daughter, iteration);
+     split_node(node->daughter);
    }
 }
 
@@ -1140,7 +1126,7 @@ node_t * dec_tree_generator(labeled_record data[] /* nRecords is NUM_CALIB */)
   
   set_label(head);
   
-  split_node(head, 0);
+  split_node(head);
   
   return head;
 }
@@ -1152,29 +1138,29 @@ void J48_output_maker(const node_t * node)
     return;
   }
   
-  char used_array[NUM_CALIB + 1];
-  for (int i = 0; i < NUM_CALIB; ++i)
-  {
-    used_array[i] = is_used(&(node->idx), i) ? 'Y' : 'N';
-  }
-  used_array[NUM_CALIB] = '\0';
+//  char used_array[NUM_CALIB + 1];
+//  for (int i = 0; i < NUM_CALIB; ++i)
+//  {
+//    used_array[i] = is_used(&(node->idx), i) ? 'Y' : 'N';
+//  }
+//  used_array[NUM_CALIB] = '\0';
   
-  uint8_t isLeaf = (node->son == NULL) && (node->daughter == NULL);
+//  uint8_t isLeaf = (node->son == NULL) && (node->daughter == NULL);
   
-  snprintf(dataOut, MAX_BUF_SIZE, "\r\nNode addr: %p, son addr: %p, dght addr: %p, cntUp: %d, cntDown: %d, usedArray: %s\r\nSplit point: %.3f Split dim: %d Label: %s Error: %.3f\r\n",
-           node, node->son, node->daughter, node->cntUp, node->cntDown, used_array, node->val, node->dim, (node->label ? "Up" : "Down"), node->error);
-  HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
-  
-  if (isLeaf)
-  {
-  snprintf(dataOut, MAX_BUF_SIZE, "Label: %s\r\n", (node->label ? "Up" : "Down"));
-  HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
-  }
-  else
-  {
-  snprintf(dataOut, MAX_BUF_SIZE, "\r\nSplit dim: %d < Split point: %.3f\r\n", node->dim, node->val);
-  HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
-  }
+//  snprintf(dataOut, MAX_BUF_SIZE, "\r\nNode addr: %p, son addr: %p, dght addr: %p, cntUp: %d, cntDown: %d, usedArray: %s\r\nSplit point: %.3f Split dim: %d Label: %s Error: %.3f\r\n",
+//           node, node->son, node->daughter, node->cntUp, node->cntDown, used_array, node->val, node->dim, (node->label ? "Up" : "Down"), node->error);
+//  HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+//  
+//  if (isLeaf)
+//  {
+//  snprintf(dataOut, MAX_BUF_SIZE, "Label: %s\r\n", (node->label ? "Up" : "Down"));
+//  HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+//  }
+//  else
+//  {
+//  snprintf(dataOut, MAX_BUF_SIZE, "\r\nSplit dim: %d < Split point: %.3f\r\n", node->dim, node->val);
+//  HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+//  }
   
   J48_output_maker(node->son);
   J48_output_maker(node->daughter);
@@ -1187,7 +1173,7 @@ const char * dim2text[4] = { "ACC_X",
 
 void print_node_WEKA_J48(const node_t * node, int depth)
 {  
-  uint8_t isLeaf = node->son == node->daughter;//(node->son == NULL) && (node->daughter == NULL);
+  uint8_t isLeaf = node->son == node->daughter; //(node->son == NULL) && (node->daughter == NULL);
   int length = 0;
   memset(dataOut, 0, sizeof(dataOut));
   
@@ -1268,11 +1254,11 @@ void print_node_WEKA_J48(const node_t * node, int depth)
   }
   
   node_t * head = dec_tree_generator(data);
-  for (int i = 0; i < NUM_CALIB; ++i)
-  {
-    snprintf(dataOut, MAX_BUF_SIZE, "\r\n data[%d] = (%.3f, %.3f, %.3f, %.3f, label: %d)", i, data[i].data.acc[0], data[i].data.acc[1], data[i].data.acc[2], data[i].data.press, data[i].label);
-    HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
-  }
+//  for (int i = 0; i < NUM_CALIB; ++i)
+//  {
+//    snprintf(dataOut, MAX_BUF_SIZE, "\r\n data[%d] = (%.3f, %.3f, %.3f, %.3f, label: %d)", i, data[i].data.acc[0], data[i].data.acc[1], data[i].data.acc[2], data[i].data.press, data[i].label);
+//    HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+//  }
       
   J48_output_maker(head);
   print_node_WEKA_J48(head, 0);
@@ -1284,9 +1270,9 @@ void print_node_WEKA_J48(const node_t * node, int depth)
   lsm6dsox_mlc_data_rate_set(&ag_ctx, LSM6DSOX_ODR_PRGS_52Hz);
   
   // set MLC status interrupt on pin2
-  lsm6dsox_pin_int2_route_t interrupt;
-  interrupt.mlc_int2.int2_mlc1 = 0;
-  lsm6dsox_pin_int2_route_set(&ag_ctx, &interrupt);
+//  lsm6dsox_pin_int2_route_t interrupt;
+//  interrupt.mlc_int2.int2_mlc1 = INT2_master_Pin;
+//  lsm6dsox_pin_int2_route_set(&ag_ctx, &interrupt);
   
   fifo_record_t data_out;
   memset(&data_out, 0, sizeof(fifo_record_t));
@@ -1299,14 +1285,21 @@ void print_node_WEKA_J48(const node_t * node, int depth)
     lsm6dsox_mlc_status_mainpage_t status;
     int reg1 = lsm6dsox_mlc_status_get(&ag_ctx,&status);
     reg1 = status.is_mlc1;
-    lsm6dsox_pin_int2_route_get(&ag_ctx, &interrupt);
+    // lsm6dsox_pin_int2_route_get(&ag_ctx, &interrupt);
       
-    if (reg2 != reg1 || interrupt.mlc_int2.int2_mlc1)
+    if (reg2 != reg1) //|| interrupt.mlc_int2.int2_mlc1)
     {
       snprintf(dataOut, MAX_BUF_SIZE, "\r\n MLC status register: %d", status.is_mlc1);
       HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
-      snprintf(dataOut, MAX_BUF_SIZE, "\r\n Interrupt: %d", interrupt.mlc_int2.int2_mlc1);
+//      snprintf(dataOut, MAX_BUF_SIZE, "\r\n Interrupt: %d", interrupt.mlc_int2.int2_mlc1);
+//      HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+    }
+    
+    if (MLC_interrupt)
+    {
+      snprintf(dataOut, MAX_BUF_SIZE, "\r\n Change of position.");
       HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+      MLC_interrupt = 0;
     }
     
     reg2 = reg1;
@@ -1437,6 +1430,11 @@ uint32_t user_currentTimeGetElapsedMS(uint32_t Tick1)
  */
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {
+  if (GPIO_Pin == INT2_master_Pin)
+  {
+    MLC_interrupt = 1;
+  }
+  
   if (GPIO_Pin == KEY_BUTTON_PIN)
   {
     /* Manage software debouncing*/
@@ -1466,7 +1464,6 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
       button_pressed = 1;
     }
   }
-
   else
   {
     Error_Handler();

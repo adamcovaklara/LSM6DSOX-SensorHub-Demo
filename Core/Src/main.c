@@ -51,7 +51,7 @@ extern  I2C_HandleTypeDef I2C_EXPBD_Handle;
 #define KEY_BUTTON_GPIO_PORT     USER_BUTTON_GPIO_PORT
 #define KEY_BUTTON_EXTI_IRQn     USER_BUTTON_EXTI_IRQn
 #define BUTTONn                  1
-#define NUM_CALIB                10
+#define NUM_CALIB                4
 
 GPIO_TypeDef* BUTTON_PORT[BUTTONn] = {KEY_BUTTON_GPIO_PORT};
 const uint16_t BUTTON_PIN[BUTTONn] = {KEY_BUTTON_PIN};
@@ -112,9 +112,15 @@ typedef struct fifo_record {
   record_t mean;
 } fifo_record_t;
 
+typedef struct result {
+  record_t walking;
+  record_t flying;
+  record_t wf;
+} result;
+
 typedef struct labeled_record {
   record_t data;
-  char label; // 0 means down, 1 means up
+  char label; // 0 means moving walking horizontally, 1 walking vertically, 2 means flying horizontally, 3 means flying vertically 
 } labeled_record;
 
 typedef struct indexer
@@ -145,7 +151,9 @@ uint8_t is_used(const indexer * idx, int id)
 }
 
 typedef struct node {
-  float val; // split point
+  float val1; // split point
+  float val2; // split point
+  float val3; // split point
   uint8_t dim; // column where the data set is split
   uint8_t label;
   float error; // fraction of opposite labeled data points
@@ -155,7 +163,7 @@ typedef struct node {
   labeled_record * data; // p0inter to all data
   
   struct node * son; // left
-  struct node * daughter; // right, women are always right
+  struct node * daughter; // right
 } node_t;
 
 /* Private variables ---------------------------------------------------------*/
@@ -495,6 +503,8 @@ fifo_record_t read_it_my_boy(void)
             data_raw_press_temp.u8bit[0] = 0x00; /* remove status register */
             if (pressID >= (watermark/3)) { break; }
             record[pressID].press = lps22hh_from_lsb_to_hpa( data_raw_press_temp.p_and_t.u32bit);
+//            snprintf(dataOut, MAX_BUF_SIZE, "Press %d\r\n",data_raw_press_temp.p_and_t.u32bit);
+//            HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
             ++pressID;
             break;
 
@@ -892,19 +902,42 @@ float get_split_point(float m1, float m2, float o1, float o2)
     return m1 + tmp * dist;
 }
 
-record_t calculate_split_points(node_t * node)
+result calculate_split_points(node_t * node)
 {
-  record_t res;
-  record_t mean_up = compute_mean(node, 1 /* up*/);
-  record_t mean_down = compute_mean(node, 0 /* down*/);
-  record_t std_up = compute_std(node, mean_up, 1);
-  record_t std_down = compute_std(node, mean_down, 0);
+  result res;
+// 0 means moving walking horizontally, 1 walking vertically, 2 means flying horizontally, 3 means flying vertically 
+  record_t mean_walking_hor = compute_mean(node, 0 );
+  record_t mean_walking_ver = compute_mean(node, 1 );
+  record_t mean_flying_hor = compute_mean(node, 2 );
+  record_t mean_flying_ver = compute_mean(node, 3 );
+  record_t std_walking_hor = compute_std(node, mean_walking_hor, 0);
+  record_t std_walking_ver = compute_std(node, mean_walking_ver, 1);
+  record_t std_flying_hor = compute_std(node, mean_flying_hor, 2);
+  record_t std_flying_ver = compute_std(node, mean_flying_ver, 3);
  
   for (int i = 0; i < 3; ++i)
   {
-    res.acc[i] = get_split_point(mean_up.acc[i], mean_down.acc[i], std_up.acc[i], std_down.acc[i]);
+    res.walking.acc[i] = get_split_point(mean_walking_hor.acc[i], mean_walking_ver.acc[i], std_walking_hor.acc[i], std_walking_ver.acc[i]);
   }
-  res.press = get_split_point(mean_up.press, mean_down.press, std_up.press, std_down.press);
+  res.walking.press = get_split_point(mean_walking_hor.press, mean_walking_ver.press, std_walking_hor.press, std_walking_ver.press);
+  
+  for (int i = 0; i < 3; ++i)
+  {
+    res.flying.acc[i] = get_split_point(mean_flying_hor.acc[i], mean_flying_ver.acc[i], std_flying_hor.acc[i], std_flying_ver.acc[i]);
+  }
+  res.flying.press = get_split_point(mean_flying_hor.press, mean_flying_ver.press, std_flying_hor.press, std_flying_ver.press);
+  
+  record_t mean_flying = compute_mean(node, 2 );
+  record_t mean_walking = compute_mean(node, 0);
+  record_t std_flying = compute_std(node, mean_flying, 2 );
+  record_t std_walking = compute_std(node, mean_walking, 0);
+  
+  for (int i = 0; i < 3; ++i)
+  {
+    res.wf.acc[i] = get_split_point(mean_walking.acc[i], mean_flying.acc[i], std_walking.acc[i], std_flying.acc[i]);
+  }
+  
+  res.wf.press = get_split_point(mean_walking.press, mean_flying.press, std_walking.press, std_flying.press);
 
   return res;
 }
@@ -1018,29 +1051,65 @@ void set_label(node_t * node)
 
 void split_node(node_t * node)
 {  
-  record_t split_points = calculate_split_points(node);
+  record_t split_points_flying = calculate_split_points(node).flying;
+  record_t split_points_walking = calculate_split_points(node).walking;
+  record_t split_points_wf = calculate_split_points(node).wf;
 
-  float min_val = 100.0f;
-  uint8_t min_id = 255;
+  float min_val1; float min_val2; float min_val3;
+  min_val1 = min_val2 = min_val3 = 100.0f;
+  uint8_t min_id1; uint8_t min_id2; uint8_t min_id3;
+  min_id1 = min_id2 = min_id3 = 255;
   
   for (int i = 3; i >= 0; --i)
   {
-    float gini_cur = compute_gini(node, dim_data(&split_points, i), i);
-    if (gini_cur < min_val)
+    float gini_cur1 = compute_gini(node, dim_data(&split_points_flying, i), i);
+    if (gini_cur1 < min_val1)
     {
-      min_val = gini_cur;
-      min_id = i;
+      min_val1 = gini_cur1;
+      min_id1 = i;
     }
   }
   
+  for (int i = 3; i >= 0; --i)
+  {
+    float gini_cur2 = compute_gini(node, dim_data(&split_points_flying, i), i);
+    if (gini_cur2 < min_val2)
+    {
+      min_val2 = gini_cur2;
+      min_id2 = i;
+    }
+  }
+  
+  for (int i = 3; i >= 0; --i)
+  {
+    float gini_cur3 = compute_gini(node, dim_data(&split_points_flying, i), i);
+    if (gini_cur3 < min_val3)
+    {
+      min_val3 = gini_cur3;
+      min_id3 = i;
+    }
+  }
+  
+  int min_id = 255;
+  if (min_id1 <= min_id2 && min_id1 <= min_id3) 
+    min_id = min_id1;
+  
+  else if (min_id2 <= min_id1 && min_id2 <= min_id3) 
+    min_id = min_id2;
+  
+  else
+    min_id = min_id3;
+    
   node->dim = min_id;
-  node->val = dim_data(&split_points, min_id); // split point
+  node->val1 = dim_data(&split_points_flying, min_id1); // split point
+  node->val2 = dim_data(&split_points_walking, min_id2); // split point
+  node->val3 = dim_data(&split_points_wf, min_id3); // split point
   node->son = node->daughter = NULL;
   
   // left one
   node_t * son = (node_t *)malloc(sizeof(node_t));
   son->daughter = son->son = NULL;
-  son->val = 0;
+  son->val1 = son->val2 = son->val3 = 0;
   son->dim = 0;
   son->data = node->data;
   memcpy((void *) (&son->idx), (const void *) (&node->idx), sizeof(node->idx));
@@ -1048,7 +1117,7 @@ void split_node(node_t * node)
   uint8_t cnt = 0;
   for (int i = 0; i < NUM_CALIB; ++i)
   {
-    if (dim_data(&son->data[i].data, node->dim) >= node->val)
+    if (dim_data(&son->data[i].data, node->dim) >= (node->val1) || dim_data(&son->data[i].data, node->dim) >= (node->val2) || dim_data(&son->data[i].data, node->dim) >= (node->val3))
     {
       unset_index(&(son->idx), i);
     }
@@ -1070,7 +1139,7 @@ void split_node(node_t * node)
   
   node_t * daughter = (node_t *)malloc(sizeof(node_t));
   daughter->daughter = daughter->son = NULL;
-  daughter->val = 0;
+  daughter->val1 = daughter->val2 = daughter->val3 = 0;
   daughter->dim = 0;
   daughter->data = node->data;
   memcpy((void *)(&daughter->idx), (void *)(&node->idx), sizeof(node->idx));
@@ -1078,7 +1147,7 @@ void split_node(node_t * node)
   cnt = 0;
   for (int i = 0; i < NUM_CALIB; ++i)
   {
-    if (dim_data(&daughter->data[i].data, node->dim) < node->val)
+    if (dim_data(&daughter->data[i].data, node->dim) < node->val1 || dim_data(&daughter->data[i].data, node->dim) < node->val2 || dim_data(&daughter->data[i].data, node->dim) < node->val3)
     {
       unset_index(&(daughter->idx), i);
     }
@@ -1098,7 +1167,7 @@ void split_node(node_t * node)
     daughter = NULL;
   }
   
-   if (min_val == 0) // min gini
+   if (min_val1 == 0 || min_val2 == 0 || min_val3 == 0) // min gini
    {
      return;
    }
@@ -1180,7 +1249,17 @@ void print_node_WEKA_J48(const node_t * node, int depth)
   if (isLeaf)
   {
       int nRecords = node->cntDown + node->cntUp;
-      snprintf(dataOut, MAX_BUF_SIZE, ": %s (%d.0", (node->label ? "Up" : "Down"), nRecords);
+      static const char *classified[] = {"Walking horizontally","Walking vertically","Flying horizontally","Flying vertically" };
+      char text[20];
+      
+      for (int i = 0; i < 4; i++)
+      {
+        if (node->label == i)
+          strcpy(text, classified[i]);
+      }
+      
+      // 0 means moving walking horizontally, 1 walking vertically, 2 means flying horizontally, 3 means flying vertically 
+      snprintf(dataOut, MAX_BUF_SIZE, ": %s (%d.0", text, nRecords);
       length = strlen(dataOut);
       
       if (node->error != 0)
@@ -1206,7 +1285,11 @@ void print_node_WEKA_J48(const node_t * node, int depth)
       dataOut[length++] = '|';
       dataOut[length++] = '\t';
     }
-    snprintf(dataOut + length, MAX_BUF_SIZE - length, "%s < %.03f", dim2text[node->dim], node->val);
+    snprintf(dataOut + length, MAX_BUF_SIZE - length, "%s < %.03f", dim2text[node->dim], node->val1);
+    HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+    snprintf(dataOut + length, MAX_BUF_SIZE - length, "%s < %.03f", dim2text[node->dim], node->val2);
+    HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+    snprintf(dataOut + length, MAX_BUF_SIZE - length, "%s < %.03f", dim2text[node->dim], node->val3);
     HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
     
     print_node_WEKA_J48(node->son, depth + 1);
@@ -1225,7 +1308,11 @@ void print_node_WEKA_J48(const node_t * node, int depth)
       dataOut[length++] = '|';
       dataOut[length++] = '\t';
     }
-    snprintf(dataOut + length, MAX_BUF_SIZE - length, "%s >= %.03f", dim2text[node->dim], node->val);
+    snprintf(dataOut + length, MAX_BUF_SIZE - length, "%s >= %.03f", dim2text[node->dim], node->val1);
+    HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+    snprintf(dataOut + length, MAX_BUF_SIZE - length, "%s >= %.03f", dim2text[node->dim], node->val2);
+    HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+    snprintf(dataOut + length, MAX_BUF_SIZE - length, "%s >= %.03f", dim2text[node->dim], node->val3);
     HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
     
     print_node_WEKA_J48(node->daughter, depth + 1);
@@ -1242,13 +1329,45 @@ void print_node_WEKA_J48(const node_t * node, int depth)
   {
     /* _NOTE_: Pushing button creates interrupt/event and wakes up MCU from sleep mode */
     data[i].data = read_it_my_boy().mean;
-    char tmp = getUserInput(&UartHandle, "For down type 'D', for up 'U'.", "DUdu");
+    char tmp = getUserInput(&UartHandle, "For walking horizontally type '0', for walking vertically type '1'. For flying horizontally type '2', for flying vertically type '3'.", "0123");
+        
+//    for (int k = 0; k < 4; k++)
+//    {
+//      if ((tmp) == (char)k)
+//      {
+//        data[i].label = k; // default is down (0)
+//        snprintf(dataOut, MAX_BUF_SIZE, "\r\nLabel1: %d \r\n", k);
+//        HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+//      }
+//    }
     
-    if (tolower(tmp) == 'u')
+    if ((tmp) == '0')
+    {
+      data[i].label = 0; // default is down (0)
+    }
+    if ((tmp) == '1')
     {
       data[i].label = 1; // default is down (0)
     }
-    snprintf(dataOut, MAX_BUF_SIZE, "\r\nClassified: %s \r\n", (data[i].label ? "Up" : "Down"));
+    if ((tmp) == '2')
+    {
+      data[i].label = 2; // default is down (0)
+    }
+    if ((tmp) == '3')
+    {
+      data[i].label = 3; // default is down (0)
+    }
+    
+    static const char *classified[] = {"Walking horizontally","Walking vertically","Flying horizontally","Flying vertically" };
+    char text[20];
+    
+    for (int k = 0; k < 4; k++)
+    {
+      if (data[i].label == (char)k)
+        strcpy(text, classified[k]);
+    }
+      
+    snprintf(dataOut, MAX_BUF_SIZE, "\r\nClassified: %s \r\n", text);
     HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
     Sleep_Mode();
   }

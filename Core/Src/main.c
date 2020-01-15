@@ -27,10 +27,10 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
-#include "C:\IKS0LAB_SensorHub-modified\IKS0LAB_SensorHub\Drivers\lps22hh\lps22hh.h"
-#include "C:\IKS0LAB_SensorHub-modified\IKS0LAB_SensorHub\Drivers\lps22hh\lps22hh_reg.h"
-#include "C:\IKS0LAB_SensorHub-modified\IKS0LAB_SensorHub\Drivers\lsm6dsox\lsm6dsox.h"
-#include "C:\IKS0LAB_SensorHub-modified\IKS0LAB_SensorHub\Drivers\lsm6dsox\lsm6dsox_reg.h"
+#include "C:\IKS0LAB_SensorHub\Drivers\lps22hh\lps22hh.h"
+#include "C:\IKS0LAB_SensorHub\Drivers\lps22hh\lps22hh_reg.h"
+#include "C:\IKS0LAB_SensorHub\Drivers\lsm6dsox\lsm6dsox.h"
+#include "C:\IKS0LAB_SensorHub\Drivers\lsm6dsox\lsm6dsox_reg.h"
 
 /* Private typedef -----------------------------------------------------------*/
 extern  I2C_HandleTypeDef I2C_EXPBD_Handle;
@@ -151,9 +151,7 @@ uint8_t is_used(const indexer * idx, int id)
 }
 
 typedef struct node {
-  float val1; // split point
-  float val2; // split point
-  float val3; // split point
+  float split[3]; // split points
   uint8_t dim; // column where the data set is split
   uint8_t label;
   float error; // fraction of opposite labeled data points
@@ -470,15 +468,18 @@ fifo_record_t read_it_my_boy(void)
     lsm6dsox_fifo_wtm_flag_get(&ag_ctx, &wtm_flag);
     
     if ( wtm_flag ) {
+        snprintf(dataOut, MAX_BUF_SIZE, "Wtm %hu\r\n",wtm_flag);
+HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
       /* Read number of samples in FIFO. */
       lsm6dsox_fifo_data_level_get(&ag_ctx, &num);
+      snprintf(dataOut, MAX_BUF_SIZE, "Num %hu\r\n",num);
+HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
       
       while(num--) {
         lsm6dsox_fifo_data_level_get(&ag_ctx, &test);
           
         /* Read FIFO tag. */
         lsm6dsox_fifo_sensor_tag_get(&ag_ctx, &reg_tag);
-
         switch(reg_tag)
         {
           case LSM6DSOX_XL_NC_TAG:
@@ -1126,15 +1127,15 @@ void split_node(node_t * node)
     min_id = min_id3;
     
   node->dim = min_id;
-  node->val1 = dim_data(&split_points_flying, min_id1); // split point
-  node->val2 = dim_data(&split_points_walking, min_id2); // split point
-  node->val3 = dim_data(&split_points_wf, min_id3); // split point
+  node->split[0] = dim_data(&split_points_flying, min_id1); // split point
+  node->split[1] = dim_data(&split_points_walking, min_id2); // split point
+  node->split[2] = dim_data(&split_points_wf, min_id3); // split point
   node->son = node->daughter = NULL;
   
   // left one
   node_t * son = (node_t *)malloc(sizeof(node_t));
   son->daughter = son->son = NULL;
-  son->val1 = son->val2 = son->val3 = 0;
+  son->split[0] = son->split[1] = son->split[2] = 0;
   son->dim = 0;
   son->data = node->data;
   memcpy((void *) (&son->idx), (const void *) (&node->idx), sizeof(node->idx));
@@ -1142,7 +1143,7 @@ void split_node(node_t * node)
   uint8_t cnt = 0;
   for (int i = 0; i < NUM_CALIB; ++i)
   {
-    if (dim_data(&son->data[i].data, node->dim) >= (node->val1) || dim_data(&son->data[i].data, node->dim) >= (node->val2) || dim_data(&son->data[i].data, node->dim) >= (node->val3))
+    if (dim_data(&son->data[i].data, node->dim) >= (node->split[0]) || dim_data(&son->data[i].data, node->dim) >= (node->split[1]) || dim_data(&son->data[i].data, node->dim) >= (node->split[2]))
     {
       unset_index(&(son->idx), i);
     }
@@ -1164,7 +1165,7 @@ void split_node(node_t * node)
   
   node_t * daughter = (node_t *)malloc(sizeof(node_t));
   daughter->daughter = daughter->son = NULL;
-  daughter->val1 = daughter->val2 = daughter->val3 = 0;
+  daughter->split[0] = daughter->split[1] = daughter->split[2] = 0;
   daughter->dim = 0;
   daughter->data = node->data;
   memcpy((void *)(&daughter->idx), (void *)(&node->idx), sizeof(node->idx));
@@ -1172,7 +1173,7 @@ void split_node(node_t * node)
   cnt = 0;
   for (int i = 0; i < NUM_CALIB; ++i)
   {
-    if (dim_data(&daughter->data[i].data, node->dim) < node->val1 || dim_data(&daughter->data[i].data, node->dim) < node->val2 || dim_data(&daughter->data[i].data, node->dim) < node->val3)
+    if (dim_data(&daughter->data[i].data, node->dim) < node->split[0] || dim_data(&daughter->data[i].data, node->dim) < node->split[1] || dim_data(&daughter->data[i].data, node->dim) < node->split[2])
     {
       unset_index(&(daughter->idx), i);
     }
@@ -1318,11 +1319,11 @@ void print_node_WEKA_J48(const node_t * node, int depth)
       dataOut[length++] = '|';
       dataOut[length++] = '\t';
     }
-    snprintf(dataOut + length, MAX_BUF_SIZE - length, "%s < %.03f", dim2text[node->dim], node->val1);
+    snprintf(dataOut + length, MAX_BUF_SIZE - length, "%s < %.03f", dim2text[node->dim], node->split[0]);
     HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
-    snprintf(dataOut + length, MAX_BUF_SIZE - length, "%s < %.03f", dim2text[node->dim], node->val2);
+    snprintf(dataOut + length, MAX_BUF_SIZE - length, "%s < %.03f", dim2text[node->dim], node->split[1]);
     HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
-    snprintf(dataOut + length, MAX_BUF_SIZE - length, "%s < %.03f", dim2text[node->dim], node->val3);
+    snprintf(dataOut + length, MAX_BUF_SIZE - length, "%s < %.03f", dim2text[node->dim], node->split[2]);
     HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
     
     print_node_WEKA_J48(node->son, depth + 1);
@@ -1341,11 +1342,11 @@ void print_node_WEKA_J48(const node_t * node, int depth)
       dataOut[length++] = '|';
       dataOut[length++] = '\t';
     }
-    snprintf(dataOut + length, MAX_BUF_SIZE - length, "%s >= %.03f", dim2text[node->dim], node->val1);
+    snprintf(dataOut + length, MAX_BUF_SIZE - length, "%s >= %.03f", dim2text[node->dim], node->split[0]);
     HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
-    snprintf(dataOut + length, MAX_BUF_SIZE - length, "%s >= %.03f", dim2text[node->dim], node->val2);
+    snprintf(dataOut + length, MAX_BUF_SIZE - length, "%s >= %.03f", dim2text[node->dim], node->split[1]);
     HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
-    snprintf(dataOut + length, MAX_BUF_SIZE - length, "%s >= %.03f", dim2text[node->dim], node->val3);
+    snprintf(dataOut + length, MAX_BUF_SIZE - length, "%s >= %.03f", dim2text[node->dim], node->split[2]);
     HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
     
     print_node_WEKA_J48(node->daughter, depth + 1);
@@ -1395,14 +1396,15 @@ void print_node_WEKA_J48(const node_t * node, int depth)
   lsm6dsox_mlc_set(&ag_ctx, 1);
   lsm6dsox_mlc_data_rate_set(&ag_ctx, LSM6DSOX_ODR_PRGS_52Hz);
   
-  // set MLC status interrupt on pin2
-//  lsm6dsox_pin_int2_route_t interrupt;
-//  interrupt.mlc_int2.int2_mlc1 = INT2_master_Pin;
-//  lsm6dsox_pin_int2_route_set(&ag_ctx, &interrupt);
-  
   fifo_record_t data_out;
   memset(&data_out, 0, sizeof(fifo_record_t));
   int reg2 = 0;
+  
+  // set MLC status interrupt on pin2
+  lsm6dsox_pin_int2_route_t int2_route;
+  lsm6dsox_pin_int2_route_get(&ag_ctx, &int2_route);
+  int2_route.mlc_int2.int2_mlc1 = PROPERTY_ENABLE;
+  lsm6dsox_pin_int2_route_set(&ag_ctx, &int2_route);
       
   /* Infinite loop */
   while (1)
@@ -1411,14 +1413,11 @@ void print_node_WEKA_J48(const node_t * node, int depth)
     lsm6dsox_mlc_status_mainpage_t status;
     int reg1 = lsm6dsox_mlc_status_get(&ag_ctx,&status);
     reg1 = status.is_mlc1;
-    // lsm6dsox_pin_int2_route_get(&ag_ctx, &interrupt);
       
-    if (reg2 != reg1) //|| interrupt.mlc_int2.int2_mlc1)
+    if (reg2 != reg1)
     {
       snprintf(dataOut, MAX_BUF_SIZE, "\r\n MLC status register: %d", status.is_mlc1);
       HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
-//      snprintf(dataOut, MAX_BUF_SIZE, "\r\n Interrupt: %d", interrupt.mlc_int2.int2_mlc1);
-//      HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
     }
     
     if (MLC_interrupt)

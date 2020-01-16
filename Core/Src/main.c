@@ -50,6 +50,7 @@ extern  I2C_HandleTypeDef I2C_EXPBD_Handle;
 #define KEY_BUTTON_PIN           USER_BUTTON_PIN
 #define KEY_BUTTON_GPIO_PORT     USER_BUTTON_GPIO_PORT
 #define KEY_BUTTON_EXTI_IRQn     USER_BUTTON_EXTI_IRQn
+#define INT2_master_Pin          GPIO_PIN_1
 #define BUTTONn                  1
 #define NUM_CALIB                4
 
@@ -113,14 +114,14 @@ typedef struct fifo_record {
 } fifo_record_t;
 
 typedef struct result {
-  record_t walking;
-  record_t flying;
+  record_t down;
+  record_t up;
   record_t wf;
 } result;
 
 typedef struct labeled_record {
   record_t data;
-  char label; // 0 means moving walking horizontally, 1 walking vertically, 2 means flying horizontally, 3 means flying vertically 
+  char label; // 0 means moving down horizontally, 1 down vertically, 2 means up horizontally, 3 means up vertically 
 } labeled_record;
 
 typedef struct indexer
@@ -387,6 +388,151 @@ record_t compute_std(const node_t * node, record_t records_mean, char label)
   return records_std;
 }
 
+record_t compute_min(record_t data[])
+{
+  record_t records_min;
+  memset(&records_min, 0, sizeof(records_min));
+  
+  float min[4] = {10000.0f, 10000.0f, 10000.0f, 10000.0f};
+  for (int j = 0; j < NUM_RECORDS; ++j)
+  { 
+    for (int i = 0; i < 3; i++)
+    {
+      if (data[j].acc[i] < min[i])
+        min[i] = data[j].acc[i];
+    }
+    if (data[j].press < min[3])
+      min[3] = data[j].press;
+  }
+
+  for (int i = 0; i < 3; i++)
+    records_min.acc[i] = min[i];
+  records_min.press = min[3];
+  return records_min;
+}
+
+record_t compute_max(record_t data[])
+{
+  record_t records_max;
+  memset(&records_max, 0.0f, sizeof(records_max));
+  
+  float max[4] = {-999.0f, -999.0f, -999.0f, -999.0f};
+  for (int j = 0; j < NUM_RECORDS; ++j)
+  {
+    for (int i = 0; i < 3; i++)
+    {
+    if (data[j].acc[i] > max[i])
+      max[i] = data[j].acc[i];
+    }
+    if (data[j].press > max[3])
+      max[3] = data[j].press;
+  }
+
+  for (int i = 0; i < 3; i++)
+    records_max.acc[i] = max[i];
+  records_max.press = max[3];
+  return records_max;
+}
+
+record_t compute_peak_to_peak(record_t records_max, record_t records_min)
+{
+  record_t peak;
+  memset(&peak, 0, sizeof(peak));
+  
+  for (int i = 0; i < 3; i++)
+  {
+    if (peak.acc[i] < 0)
+      peak.acc[i] = fabs(records_max.acc[i]) + fabs(records_min.acc[i]);
+    else
+      peak.acc[i] = records_max.acc[i] - records_min.acc[i];
+  }
+  
+  if (peak.press < 0)
+    peak.press = fabs(records_max.press) + fabs(records_min.press);
+  else
+    peak.press = records_max.press - records_min.press;
+  return peak;
+}
+
+record_t compute_min_for_node(const node_t * node, char label)
+{
+  record_t records_min;
+  memset(&records_min, 0, sizeof(records_min));
+  
+  float min[4] = {10000.0f, 10000.0f, 10000.0f, 10000.0f};
+  for (int i = 0; i < NUM_CALIB; ++i)
+  { 
+    if (node->data[i].label != label || !is_used(&(node->idx), i)) 
+    { 
+      continue; 
+    }
+        
+    const record_t * data = &(node->data[i].data);
+
+    for (int j = 0; j < 3; j++)
+    {
+    if (data->acc[j] < min[j])
+      min[j] = data->acc[j];
+    }
+    if (data->press < min[3])
+      min[3] = data->press;
+  }
+    
+  for (int i = 0; i < 3; i++)
+    records_min.acc[i] = min[i];
+  records_min.press = min[3];
+  return records_min;
+}
+
+record_t compute_max_for_node(const node_t * node, char label)
+{
+  record_t records_max;
+  memset(&records_max, 0, sizeof(records_max));
+  
+  float max[4] = {-999.0f, -999.0f, -999.0f, -999.0f};
+  for (int i = 0; i < NUM_CALIB; ++i)
+  { 
+    if (node->data[i].label != label || !is_used(&(node->idx), i)) 
+    { 
+      continue; 
+    }
+        
+    const record_t * data = &(node->data[i].data);
+
+    for (int j = 0; j < 3; j++)
+    {
+    if (data->acc[j] > max[j])
+      max[j] = data->acc[j];
+    }
+    if (data->press > max[3])
+      max[3] = data->press;
+  }
+    
+  for (int i = 0; i < 3; i++)
+    records_max.acc[i] = max[i];
+  records_max.press = max[3];
+  return records_max;
+}
+
+record_t compute_peak_to_peak_for_node(record_t records_max, record_t records_min)
+{
+  record_t peak;
+  memset(&peak, 0, sizeof(peak));
+  for (int i = 0; i < 3; i++)
+  {
+    if (peak.acc[i] < 0)
+      peak.acc[i] = fabs(records_max.acc[i]) + fabs(records_min.acc[i]);
+    else
+      peak.acc[i] = records_max.acc[i] - records_min.acc[i];
+  }
+  
+  if (peak.press < 0)
+    peak.press = fabs(records_max.press) + fabs(records_min.press);
+  else
+    peak.press = records_max.press - records_min.press;
+  return peak;
+}
+
 fifo_record_t read_it_my_boy(void)
 {
   static const int watermark = 3 * NUM_RECORDS;
@@ -468,12 +614,8 @@ fifo_record_t read_it_my_boy(void)
     lsm6dsox_fifo_wtm_flag_get(&ag_ctx, &wtm_flag);
     
     if ( wtm_flag ) {
-        snprintf(dataOut, MAX_BUF_SIZE, "Wtm %hu\r\n",wtm_flag);
-HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
       /* Read number of samples in FIFO. */
       lsm6dsox_fifo_data_level_get(&ag_ctx, &num);
-      snprintf(dataOut, MAX_BUF_SIZE, "Num %hu\r\n",num);
-HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
       
       while(num--) {
         lsm6dsox_fifo_data_level_get(&ag_ctx, &test);
@@ -906,39 +1048,39 @@ float get_split_point(float m1, float m2, float o1, float o2)
 result calculate_split_points(node_t * node)
 {
   result res;
-// 0 means moving walking horizontally, 1 walking vertically, 2 means flying horizontally, 3 means flying vertically 
-  record_t mean_walking_hor = compute_mean(node, 0 );
-  record_t mean_walking_ver = compute_mean(node, 1 );
-  record_t mean_flying_hor = compute_mean(node, 2 );
-  record_t mean_flying_ver = compute_mean(node, 3 );
-  record_t std_walking_hor = compute_std(node, mean_walking_hor, 0);
-  record_t std_walking_ver = compute_std(node, mean_walking_ver, 1);
-  record_t std_flying_hor = compute_std(node, mean_flying_hor, 2);
-  record_t std_flying_ver = compute_std(node, mean_flying_ver, 3);
+// 0 means moving down horizontally, 1 down vertically, 2 means up horizontally, 3 means up vertically 
+  record_t peak_down_hor = compute_peak_to_peak_for_node(compute_max_for_node(node, 0), compute_min_for_node(node, 0));
+  record_t peak_down_ver = compute_peak_to_peak_for_node(compute_max_for_node(node, 1), compute_min_for_node(node, 1));
+  record_t peak_up_hor = compute_peak_to_peak_for_node(compute_max_for_node(node, 2), compute_min_for_node(node, 2));
+  record_t peak_up_ver = compute_peak_to_peak_for_node(compute_max_for_node(node, 3), compute_min_for_node(node, 3));
+  record_t std_down_hor = compute_std(node, peak_down_hor, 0);
+  record_t std_down_ver = compute_std(node, peak_down_ver, 1);
+  record_t std_up_hor = compute_std(node, peak_up_hor, 2);
+  record_t std_up_ver = compute_std(node, peak_up_ver, 3);
  
   for (int i = 0; i < 3; ++i)
   {
-    res.walking.acc[i] = get_split_point(mean_walking_hor.acc[i], mean_walking_ver.acc[i], std_walking_hor.acc[i], std_walking_ver.acc[i]);
+    res.down.acc[i] = get_split_point(peak_down_hor.acc[i], peak_down_ver.acc[i], std_down_hor.acc[i], std_down_ver.acc[i]);
   }
-  res.walking.press = get_split_point(mean_walking_hor.press, mean_walking_ver.press, std_walking_hor.press, std_walking_ver.press);
+  res.down.press = get_split_point(peak_down_hor.press, peak_down_ver.press, std_down_hor.press, std_down_ver.press);
   
   for (int i = 0; i < 3; ++i)
   {
-    res.flying.acc[i] = get_split_point(mean_flying_hor.acc[i], mean_flying_ver.acc[i], std_flying_hor.acc[i], std_flying_ver.acc[i]);
+    res.up.acc[i] = get_split_point(peak_up_hor.acc[i], peak_up_ver.acc[i], std_up_hor.acc[i], std_up_ver.acc[i]);
   }
-  res.flying.press = get_split_point(mean_flying_hor.press, mean_flying_ver.press, std_flying_hor.press, std_flying_ver.press);
+  res.up.press = get_split_point(peak_up_hor.press, peak_up_ver.press, std_up_hor.press, std_up_ver.press);
   
-  record_t mean_flying = compute_mean(node, 2 );
-  record_t mean_walking = compute_mean(node, 0);
-  record_t std_flying = compute_std(node, mean_flying, 2 );
-  record_t std_walking = compute_std(node, mean_walking, 0);
+  record_t mean_up = compute_mean(node, 2 );
+  record_t mean_down = compute_mean(node, 0);
+  record_t std_up = compute_std(node, mean_up, 2 );
+  record_t std_down = compute_std(node, mean_down, 0);
   
   for (int i = 0; i < 3; ++i)
   {
-    res.wf.acc[i] = get_split_point(mean_walking.acc[i], mean_flying.acc[i], std_walking.acc[i], std_flying.acc[i]);
+    res.wf.acc[i] = get_split_point(mean_down.acc[i], mean_up.acc[i], std_down.acc[i], std_up.acc[i]);
   }
   
-  res.wf.press = get_split_point(mean_walking.press, mean_flying.press, std_walking.press, std_flying.press);
+  res.wf.press = get_split_point(mean_down.press, mean_up.press, std_down.press, std_up.press);
 
   return res;
 }
@@ -964,60 +1106,36 @@ static float square(float val)
 
 float compute_gini(const node_t * node, float split_point, int dim)
 {
-  int wk_hor = 0, wk_ver = 0, fl_hor = 0, fl_ver = 0;
+  int down_hor = 0, down_ver = 0, up_hor = 0, up_ver = 0;
   int num_valid = 0;
   
   for (int i = 0; i < NUM_CALIB; ++i)
   {
     if (!is_used(&(node->idx), i))
     {continue;}
-        // 0 means moving walking horizontally, 1 walking vertically, 2 means flying horizontally, 3 means flying vertically 
+        // 0 means moving down horizontally, 1 down vertically, 2 means up horizontally, 3 means up vertically 
     num_valid += 1;
         
     if (dim_data(&node->data[i].data, dim) < split_point)
     {
       if (node->data[i].label == 0) // down
       {
-        ++wk_hor;
-      }
-      else
-      {
-        ++wk_ver;
-        ++fl_hor;
-        ++fl_ver;
+        ++down_hor;
       }
       
       if (node->data[i].label == 1) // down
       {
-        ++wk_ver;
-      }
-      else
-      {
-        ++wk_hor;
-        ++fl_hor;
-        ++fl_ver;
+        ++down_ver;
       }
       
       if (node->data[i].label == 2) // up
       {
-        ++fl_hor;
+        ++up_hor;
       }
-      else
-      {
-        ++wk_hor;
-        ++wk_ver;
-        ++fl_ver;
-        
-      }
+
       if (node->data[i].label == 3) // up
       {
-        ++fl_ver;
-      }
-      else
-      {
-        ++wk_hor;
-        ++fl_hor;
-        ++wk_ver;
+        ++up_ver;
       }
     }
   }
@@ -1026,21 +1144,21 @@ float compute_gini(const node_t * node, float split_point, int dim)
 //  snprintf(dataOut, MAX_BUF_SIZE, "\r\nUp GTE %d Up LT: %d\r\n", up_gte, up_lt);
 //  HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
   
-  int num_wk = wk_hor + wk_ver;
+  int num_wk = down_hor + down_ver;
   float gini_wk = 0;
   if (num_wk > 0)
   {
-    gini_wk = 1 - square(wk_ver / num_wk) - square(wk_hor / num_wk);
+    gini_wk = 1 - square(down_ver / num_wk) - square(down_hor / num_wk);
   }
 
 //snprintf(dataOut, MAX_BUF_SIZE, "\r\nGini DOWN: %.3f\r\n", gini_down);
 //HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
   
-  int num_fl = fl_hor + fl_ver;
+  int num_fl = up_hor + up_ver;
   float gini_fl = 0;
   if (num_fl > 0)
   {
-    gini_fl = 1 - square(fl_hor / num_fl) - square(fl_ver / num_fl);
+    gini_fl = 1 - square(up_hor / num_fl) - square(up_ver / num_fl);
   }
   
 //snprintf(dataOut, MAX_BUF_SIZE, "\r\nGini UP: %.3f\r\n", gini_up);
@@ -1051,7 +1169,7 @@ float compute_gini(const node_t * node, float split_point, int dim)
 
 void set_label(node_t * node)
 {
-  // 0 means moving walking horizontally, 1 walking vertically, 2 means flying horizontally, 3 means flying vertically 
+  // 0 means moving down horizontally, 1 down vertically, 2 means up horizontally, 3 means up vertically 
   int array[4] = {0, 0, 0, 0};
   for (int i = 0; i < NUM_CALIB; ++i)
   {
@@ -1077,8 +1195,8 @@ void set_label(node_t * node)
 
 void split_node(node_t * node)
 {  
-  record_t split_points_flying = calculate_split_points(node).flying;
-  record_t split_points_walking = calculate_split_points(node).walking;
+  record_t split_points_up = calculate_split_points(node).up;
+  record_t split_points_down = calculate_split_points(node).down;
   record_t split_points_wf = calculate_split_points(node).wf;
 
   float min_val1; float min_val2; float min_val3;
@@ -1088,7 +1206,7 @@ void split_node(node_t * node)
   
   for (int i = 3; i >= 0; --i)
   {
-    float gini_cur1 = compute_gini(node, dim_data(&split_points_flying, i), i);
+    float gini_cur1 = compute_gini(node, dim_data(&split_points_up, i), i);
     if (gini_cur1 < min_val1)
     {
       min_val1 = gini_cur1;
@@ -1098,7 +1216,7 @@ void split_node(node_t * node)
   
   for (int i = 3; i >= 0; --i)
   {
-    float gini_cur2 = compute_gini(node, dim_data(&split_points_flying, i), i);
+    float gini_cur2 = compute_gini(node, dim_data(&split_points_up, i), i);
     if (gini_cur2 < min_val2)
     {
       min_val2 = gini_cur2;
@@ -1108,7 +1226,7 @@ void split_node(node_t * node)
   
   for (int i = 3; i >= 0; --i)
   {
-    float gini_cur3 = compute_gini(node, dim_data(&split_points_flying, i), i);
+    float gini_cur3 = compute_gini(node, dim_data(&split_points_up, i), i);
     if (gini_cur3 < min_val3)
     {
       min_val3 = gini_cur3;
@@ -1127,8 +1245,8 @@ void split_node(node_t * node)
     min_id = min_id3;
     
   node->dim = min_id;
-  node->split[0] = dim_data(&split_points_flying, min_id1); // split point
-  node->split[1] = dim_data(&split_points_walking, min_id2); // split point
+  node->split[0] = dim_data(&split_points_up, min_id1); // split point
+  node->split[1] = dim_data(&split_points_down, min_id2); // split point
   node->split[2] = dim_data(&split_points_wf, min_id3); // split point
   node->son = node->daughter = NULL;
   
@@ -1283,7 +1401,7 @@ void print_node_WEKA_J48(const node_t * node, int depth)
   if (isLeaf)
   {    
       int nRecords = sumator(node);
-      static const char *classified[] = {"Walking horizontally","Walking vertically","Flying horizontally","Flying vertically" };
+      static const char *classified[] = {"down horizontally","down vertically","up horizontally","up vertically" };
       char text[20];
       
       for (int i = 0; i < 4; i++)
@@ -1292,7 +1410,7 @@ void print_node_WEKA_J48(const node_t * node, int depth)
           strcpy(text, classified[i]);
       }
       
-      // 0 means moving walking horizontally, 1 walking vertically, 2 means flying horizontally, 3 means flying vertically 
+      // 0 means moving down horizontally, 1 down vertically, 2 means up horizontally, 3 means up vertically 
       snprintf(dataOut, MAX_BUF_SIZE, ": %s (%d.0", text, nRecords);
       length = strlen(dataOut);
       
@@ -1363,10 +1481,10 @@ void print_node_WEKA_J48(const node_t * node, int depth)
   {
     /* _NOTE_: Pushing button creates interrupt/event and wakes up MCU from sleep mode */
     data[i].data = read_it_my_boy().mean;
-    char tmp = getUserInput(&UartHandle, "For walking horizontally type '0', for walking vertically type '1'. For flying horizontally type '2', for flying vertically type '3'.", "0123");
+    char tmp = getUserInput(&UartHandle, "For down horizontally type '0', for down vertically type '1'. For up horizontally type '2', for up vertically type '3'.", "0123");
     data[i].label = tmp - '0'; // default is down (0)
     
-    static const char *classified[] = {"Walking horizontally","Walking vertically","Flying horizontally","Flying vertically" };
+    static const char *classified[] = {"down horizontally","down vertically","up horizontally","up vertically" };
     char text[20];
     
     for (int k = 0; k < 4; k++)
@@ -1393,11 +1511,17 @@ void print_node_WEKA_J48(const node_t * node, int depth)
   Sleep_Mode();
   
   // enable MLC & set ODR to 52 [Hz]
-  lsm6dsox_mlc_set(&ag_ctx, 1);
-  lsm6dsox_mlc_data_rate_set(&ag_ctx, LSM6DSOX_ODR_PRGS_52Hz);
+  lsm6dsox_mlc_set(&ag_ctx, PROPERTY_ENABLE);
+  lsm6dsox_mlc_data_rate_set(&ag_ctx, LSM6DSOX_ODR_PRGS_12Hz5);
   
   fifo_record_t data_out;
   memset(&data_out, 0, sizeof(fifo_record_t));
+  record_t data_max;
+  memset(&data_max, 0, sizeof(data_max));
+  record_t data_min;
+  memset(&data_min, 0, sizeof(data_min));
+  record_t data_peak;
+  memset(&data_peak, 0, sizeof(data_peak));
   int reg2 = 0;
   
   // set MLC status interrupt on pin2
@@ -1414,7 +1538,7 @@ void print_node_WEKA_J48(const node_t * node, int depth)
     int reg1 = lsm6dsox_mlc_status_get(&ag_ctx,&status);
     reg1 = status.is_mlc1;
       
-    if (reg2 != reg1)
+    if (reg2 != reg1 && reg1 != 0)
     {
       snprintf(dataOut, MAX_BUF_SIZE, "\r\n MLC status register: %d", status.is_mlc1);
       HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
@@ -1432,16 +1556,34 @@ void print_node_WEKA_J48(const node_t * node, int depth)
     if (button_pressed)
     {        
       data_out = read_it_my_boy();
+      data_max = compute_max(data_out.fifo);
+      data_min = compute_min(data_out.fifo);
+      data_peak = compute_peak_to_peak(data_max, data_min);
               
-      for (int i = 0; i < NUM_RECORDS; i++)
-      {
-        snprintf(dataOut, MAX_BUF_SIZE, "\r\n data[%d] = (%.3f, %.3f, %.3f, %.3f)", i, data_out.fifo[i].acc[0], data_out.fifo[i].acc[1], data_out.fifo[i].acc[2], data_out.fifo[i].press);
-        HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
-      }
-      
-      snprintf(dataOut, MAX_BUF_SIZE, "\r\n");
+//      for (int i = 0; i < NUM_RECORDS; i++)
+//      {
+//        snprintf(dataOut, MAX_BUF_SIZE, "\r\n%.3f, %.3f, %.3f, %.3f", data_out.fifo[i].acc[0], data_out.fifo[i].acc[1], data_out.fifo[i].acc[2], data_out.fifo[i].press);
+//        HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+//      }
+      snprintf(dataOut, MAX_BUF_SIZE, "\r\n%.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, ",
+               data_out.mean.acc[0], data_out.mean.acc[1], data_out.mean.acc[2], data_out.mean.press,
+               data_max.acc[0], data_max.acc[1], data_max.acc[2], data_max.press,
+               data_min.acc[0], data_min.acc[1], data_min.acc[2], data_min.press,
+               data_peak.acc[0], data_peak.acc[1], data_peak.acc[2], data_peak.press);
       HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
       
+//      snprintf(dataOut, MAX_BUF_SIZE, "\r\n");
+//      HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+//      snprintf(dataOut, MAX_BUF_SIZE, "\r\n F1_MEAN %.3f, %.3f, %.3f, %.3f", data_out.mean.acc[0], data_out.mean.acc[1], data_out.mean.acc[2], data_out.mean.press);
+//      HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+//      snprintf(dataOut, MAX_BUF_SIZE, "\r\n F2_MAX %.3f, %.3f, %.3f, %.3f", data_max.acc[0], data_max.acc[1], data_max.acc[2], data_max.press);
+//      HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+//      snprintf(dataOut, MAX_BUF_SIZE, "\r\n F3_MIN %.3f, %.3f, %.3f, %.3f", data_min.acc[0], data_min.acc[1], data_min.acc[2], data_min.press);
+//      HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+//      snprintf(dataOut, MAX_BUF_SIZE, "\r\n F4_PEAK_TO_PEAK %.3f, %.3f, %.3f, %.3f", data_peak.acc[0], data_peak.acc[1], data_peak.acc[2], data_peak.press);
+//      HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+      snprintf(dataOut, MAX_BUF_SIZE, "\r\n \r\n");
+      HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
       /* _NOTE_: Pushing button creates interrupt/event and wakes up MCU from sleep mode */
 //      record_t data[3];
 //      memset(&data, 0, sizeof(data));

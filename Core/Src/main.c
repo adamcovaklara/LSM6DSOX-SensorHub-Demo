@@ -27,10 +27,10 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
-#include "C:\IKS0LAB_SensorHub\Drivers\lps22hh\lps22hh.h"
-#include "C:\IKS0LAB_SensorHub\Drivers\lps22hh\lps22hh_reg.h"
-#include "C:\IKS0LAB_SensorHub\Drivers\lsm6dsox\lsm6dsox.h"
-#include "C:\IKS0LAB_SensorHub\Drivers\lsm6dsox\lsm6dsox_reg.h"
+#include "C:\IKS0LAB_SensorHub-modified\IKS0LAB_SensorHub\Drivers\lps22hh\lps22hh.h"
+#include "C:\IKS0LAB_SensorHub-modified\IKS0LAB_SensorHub\Drivers\lps22hh\lps22hh_reg.h"
+#include "C:\IKS0LAB_SensorHub-modified\IKS0LAB_SensorHub\Drivers\lsm6dsox\lsm6dsox.h"
+#include "C:\IKS0LAB_SensorHub-modified\IKS0LAB_SensorHub\Drivers\lsm6dsox\lsm6dsox_reg.h"
 
 /* Private typedef -----------------------------------------------------------*/
 extern  I2C_HandleTypeDef I2C_EXPBD_Handle;
@@ -389,6 +389,7 @@ char getUserInput(UART_HandleTypeDef *huart, char * welcomeMSG, char * validOpti
   }
 }
 
+// use label -1 for computing means of all axes
 record_t compute_mean(const node_t * node, char label)
 {
   record_t records_mean;
@@ -397,7 +398,7 @@ record_t compute_mean(const node_t * node, char label)
   int num_rec = 0;
   for (int i = 0; i < NUM_CALIB; ++i)
   { 
-    if (node->data[i].label != label || !is_used(&(node->idx), i)) 
+    if ((label != -1 && node->data[i].label != label) || !is_used(&(node->idx), i)) 
     { 
       continue; 
     }
@@ -421,6 +422,7 @@ record_t compute_mean(const node_t * node, char label)
 }
 
 // label 0 means down, 1 up
+// use label -1 for computing means of all axes
 record_t compute_std(const node_t * node, record_t records_mean, char label)
 {
   record_t records_std;
@@ -429,7 +431,7 @@ record_t compute_std(const node_t * node, record_t records_mean, char label)
   int num_rec = 0;
   for (int i = 0; i < NUM_CALIB; ++i)
   {
-    if (node->data[i].label != label || !is_used(&(node->idx), i)) 
+    if ((label != -1 && node->data[i].label != label) || !is_used(&(node->idx), i)) 
     { 
       continue; 
     }
@@ -1102,88 +1104,54 @@ float get_split_point(float m1, float m2, float o1, float o2)
     return m1 + tmp * dist;
 }
 
-float get_split(const node_t * node, char label, int k)
+static int count_valid_pts(const node_t * node)
 {
-  float split_set[4] = {0.0f, 0.0f, 0.0f, 0.0f};
-  for (int i = 0; i < 4; i++)
+  int res = 0;
+  for (int i = 0; i < NUM_CALIB; ++i)
   {
-    record_t test = compute_mean(node, i);
-    record_t test2 = compute_std(node,compute_mean(node, i),i);
-    for (int j = 0; j < 3; j++)
+    if (is_used(&(node->idx), i))
     {
-      split_set[i] = test.acc[i] + test2.acc[i] * getInverseCDFValue(i/(k+1));
+      ++res;
     }
-    split_set[i] = test.press + test2.press * getInverseCDFValue(i/(k+1));
   }
+  
+  return res;
+}
 
-  if (k == 1)
+typedef struct pointDim
+{
+  float pt;
+  int dim;
+} pointDim;
+
+// returns the best split point and dim for given data
+pointDim get_best_split(const node_t * node)
+{
+  int nValid = count_valid_pts(node);
+  int k = sqrt(nValid);
+  record_t mean = compute_mean(node, -1);  
+  record_t std = compute_std(node, mean, -1);
+  
+  pointDim best = {0, -1};
+  float giniBest = 1.0f;
+  
+  for (int i = 0; i < 4; ++i)
   {
-    float maximum = 0.0f;
-    for (int i = 0; i < 4; i++)
+    float split_point;
+    for (int j = 1; j <= k; ++j)
     {
-      if (split_set[i] > maximum)
-        maximum = split_set[i];
-    }
-    
-    return maximum;
-  }
-  if (k == 2)
-  {
-    float maximum[2] = {0.0f, 0.0f};
-    for (int i = 0; i < 4; i++)
-    {
-      if (split_set[i] > maximum[0])
+      split_point = dim_data(&mean, i) + dim_data(&std, i) * getInverseCDFValue(j /(k + 1));
+      float gini = compute_gini(node, split_point, i);
+      if (gini < giniBest)
       {
-        maximum[0] = split_set[i];
-        maximum[1] = maximum[0]; 
+        giniBest = gini;
+        best.pt = split_point;
+        best.dim = i;
       }
-      
-      /* If arr[i] is in between first and  
-      second then update second  */
-      else if (split_set[i] > maximum[1] && split_set[i] != maximum[0]) 
-        maximum[1] = split_set[i]; 
-      
-      float minimum[2] = {10000.0f, 10000.0f};
-      int min_idx = 0;
-      for (int j = 0; j < 4; j++)
-        for (int i = 0; i < 2; i++)
-        {
-          if (compute_gini(node, maximum[i], i) < minimum[i])
-          {
-            minimum[i] = compute_gini(node, maximum[i], j);
-            min_idx = i;
-          }
-        }
-      return maximum[min_idx];
-    }
-    if (k == 3)
-    {
-      float maximum[3] = {0.0f, 0.0f, 0.0f};
-      for (int i = 0; i < 4; i++)
-      {
-        if (split_set[i] > maximum[0])
-          maximum[0] = split_set[i];
-        if (split_set[i] > maximum[1] && split_set[i] < maximum[0]) 
-          maximum[1] = split_set[i]; 
-        if (split_set[i] > maximum[2] && split_set[i] < maximum[1]) 
-          maximum[2] = split_set[i];
-      }
-    
-    float minimum[3] = {10000.0f, 10000.0f, 10000.0f};
-    int min_idx = 0;
-    for (int j = 0; j < 4; j++)
-      for (int i = 0; i < 3; i++)
-      {
-        if (compute_gini(node, maximum[i], i) < minimum[i])
-        {
-          minimum[i] = compute_gini(node, maximum[i], j);
-          min_idx = i;
-        }
-      }
-    return maximum[min_idx];
     }
   }
-  return 0.0f; // shouldnt happen, function is available for n < 4 split points
+  
+  return best; // will return dim == -1 in case of failure
 }
 
 result calculate_split_points(node_t * node)
@@ -1250,75 +1218,57 @@ static float square(float val)
   return val * val;
 }
 
+static int sum4(const int * array)
+{
+  int res = 0;
+  for (int i = 0; i < 4; ++i)
+  {
+    res += array[i];
+  }
+  
+  return res;
+}
+
 float compute_gini(const node_t * node, float split_point, int dim)
 {
-  int down_hor = 0, down_ver = 0, up_hor = 0, up_ver = 0;
-  int num_valid = 0;
-
-  snprintf(dataOut, MAX_BUF_SIZE, "\r\nSplit: %.3f", split_point);
-  HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
-  snprintf(dataOut, MAX_BUF_SIZE, " for dimension %d\r\n\r\n", dim);
-  HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+  int gte[4];
+  int lt[4];
+  memset(gte, 0, sizeof(gte));
+  memset(lt, 0, sizeof(lt));
 
   for (int i = 0; i < NUM_CALIB; ++i)
   {
     if (!is_used(&(node->idx), i))
     {continue;}
-        // 0 means moving down horizontally, 1 down vertically, 2 means up horizontally, 3 means up vertically 
-    num_valid += 1;
-        
-//    if (dim_data(&node->data[i].data, dim) < split_point)
-//    {
-      if (node->data[i].label == 0) // down
-      {
-        ++down_hor;
-      }
-      
-      if (node->data[i].label == 1) // down
-      {
-        ++down_ver;
-      }
-      
-      if (node->data[i].label == 2) // up
-      {
-        ++up_hor;
-      }
-
-      if (node->data[i].label == 3) // up
-      {
-        ++up_ver;
-      }
+    
+    // 0 means moving down horizontally, 1 down vertically, 2 means up horizontally, 3 means up vertically 
+    if (dim_data(&node->data[i].data, dim) < split_point)
+    {
+      ++lt[node->data[i].label];
     }
-//  }
-//  snprintf(dataOut, MAX_BUF_SIZE, "\r\nDown GTE %d Down LT: %d\r\n", down_hor, down_ver);
-//  HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
-//  snprintf(dataOut, MAX_BUF_SIZE, "\r\nUp GTE %d Up LT: %d\r\n", up_hor, up_ver);
-//  HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
-  
-  int num_wk = down_hor + down_ver;
-  float gini_wk = 0;
-  if (num_wk > 0)
-  {
-    gini_wk = 1 - square(down_ver / num_wk) - square(down_hor / num_wk);
-  }
-
-//snprintf(dataOut, MAX_BUF_SIZE, "\r\nGini DOWN: %.3f\r\n", gini_wk);
-//HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
-  
-  int num_fl = up_hor + up_ver;
-  float gini_fl = 0;
-  if (num_fl > 0)
-  {
-    gini_fl = 1 - square(up_hor / num_fl) - square(up_ver / num_fl);
+    else
+    {
+      ++gte[node->data[i].label];
+    }
   }
   
-//snprintf(dataOut, MAX_BUF_SIZE, "\r\nGini UP: %.3f\r\n", gini_fl);
-//HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+  float res = 0;
+  for (int i = 0; i < 4; ++i)
+  {
+    float n_in_class = lt[i] + gte[i];
+    if (!n_in_class) { continue; }
+    float gini = 1 - square(lt[i] / n_in_class) - square(gte[i] / n_in_class);
+    res += gini * n_in_class;
+  }
   
-//  snprintf(dataOut, MAX_BUF_SIZE, "\r\nGini complete: %.3f\r\n", (gini_wk * num_wk + gini_fl * num_fl) / num_valid);
-//  HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+  int nValid = sum4(lt) + sum4(gte);
+  if (nValid == 0)
+  {  
+    snprintf(dataOut, MAX_BUF_SIZE, "\r\nError 0 samples in giniIndex...\r\n");
+    HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+  }
  
-  return (gini_wk * num_wk + gini_fl * num_fl) / num_valid;
+  return res / nValid;
 }
 
 void set_label(node_t * node)

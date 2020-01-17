@@ -195,6 +195,9 @@ float dim_data(const record_t * data, int dim);
 static float square(float val);
 node_t * dec_tree_generator(labeled_record data[]);
 
+#ifndef M_PI
+#define M_PI (3.141592653589793)
+#endif
 /*
  *   WARNING:
  *   Functions declare in this section are defined at the end of this file
@@ -212,6 +215,75 @@ void Error_Handler(void)
 {
       snprintf(dataOut, MAX_BUF_SIZE, "\r\nError.\r\n");
       HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+}
+
+double getInverseCDFValue(float p)
+{
+double a1 = -39.69683028665376;
+double a2 = 220.9460984245205;
+double a3 = -275.9285104469687;
+double a4 = 138.3577518672690;
+double a5 =-30.66479806614716;
+double a6 = 2.506628277459239;
+
+double b1 = -54.47609879822406;
+double b2 = 161.5858368580409;
+double b3 = -155.6989798598866;
+double b4 = 66.80131188771972;
+double b5 = -13.28068155288572;
+
+double c1 = -0.007784894002430293;
+double c2 = -0.3223964580411365;
+double c3 = -2.400758277161838;
+double c4 = -2.549732539343734;
+double c5 = 4.374664141464968;
+double c6 = 2.938163982698783;
+
+double d1 = 0.007784695709041462;
+double d2 = 0.3224671290700398;
+double d3 = 2.445134137142996;
+double d4 = 3.754408661907416;
+
+//Define break-points.
+
+double p_low =  0.02425;
+double p_high = 1 - p_low;
+long double  q, r, e, u;
+long double x = 0.0;
+
+
+//Rational approximation for lower region.
+
+if (0 < p && p < p_low) {
+    q = sqrt(-2*log(p));
+    x = (((((c1*q+c2)*q+c3)*q+c4)*q+c5)*q+c6) / ((((d1*q+d2)*q+d3)*q+d4)*q+1);
+}
+
+//Rational approximation for central region.
+
+if (p_low <= p && p <= p_high) {
+    q = p - 0.5;
+    r = q*q;
+    x = (((((a1*r+a2)*r+a3)*r+a4)*r+a5)*r+a6)*q / (((((b1*r+b2)*r+b3)*r+b4)*r+b5)*r+1);
+}
+
+//Rational approximation for upper region.
+
+if (p_high < p && p < 1) {
+    q = sqrt(-2*log(1-p));
+    x = -(((((c1*q+c2)*q+c3)*q+c4)*q+c5)*q+c6) / ((((d1*q+d2)*q+d3)*q+d4)*q+1);
+}
+
+
+//Pseudo-code algorithm for refinement
+
+if(( 0 < p)&&(p < 1)){
+    e = 0.5 * erfc(-x/sqrt(2)) - p;
+    u = e * sqrt(2*M_PI) * exp(x*x/2);
+    x = x - u/(1 + x*u/2);
+}
+
+return x;
 }
 
 /* Configure low level function to access to external device
@@ -438,19 +510,11 @@ record_t compute_peak_to_peak(record_t records_max, record_t records_min)
 {
   record_t peak;
   memset(&peak, 0, sizeof(peak));
-  
   for (int i = 0; i < 3; i++)
   {
-    if (peak.acc[i] < 0)
-      peak.acc[i] = fabs(records_max.acc[i]) + fabs(records_min.acc[i]);
-    else
       peak.acc[i] = records_max.acc[i] - records_min.acc[i];
   }
-  
-  if (peak.press < 0)
-    peak.press = fabs(records_max.press) + fabs(records_min.press);
-  else
-    peak.press = records_max.press - records_min.press;
+  peak.press = records_max.press - records_min.press;
   return peak;
 }
 
@@ -479,8 +543,8 @@ record_t compute_min_for_node(const node_t * node, char label)
   }
     
   for (int i = 0; i < 3; i++)
-    records_min.acc[i] = min[i];
-  records_min.press = min[3];
+    records_min.acc[i] = min[i] / 2000;
+  records_min.press = min[3] / 1000;
   return records_min;
 }
 
@@ -509,8 +573,8 @@ record_t compute_max_for_node(const node_t * node, char label)
   }
     
   for (int i = 0; i < 3; i++)
-    records_max.acc[i] = max[i];
-  records_max.press = max[3];
+    records_max.acc[i] = max[i] / 2000;
+  records_max.press = max[3] / 1000 ;
   return records_max;
 }
 
@@ -520,16 +584,9 @@ record_t compute_peak_to_peak_for_node(record_t records_max, record_t records_mi
   memset(&peak, 0, sizeof(peak));
   for (int i = 0; i < 3; i++)
   {
-    if (peak.acc[i] < 0)
-      peak.acc[i] = fabs(records_max.acc[i]) + fabs(records_min.acc[i]);
-    else
       peak.acc[i] = records_max.acc[i] - records_min.acc[i];
   }
-  
-  if (peak.press < 0)
-    peak.press = fabs(records_max.press) + fabs(records_min.press);
-  else
-    peak.press = records_max.press - records_min.press;
+  peak.press = records_max.press - records_min.press;
   return peak;
 }
 
@@ -1045,6 +1102,90 @@ float get_split_point(float m1, float m2, float o1, float o2)
     return m1 + tmp * dist;
 }
 
+float get_split(const node_t * node, char label, int k)
+{
+  float split_set[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+  for (int i = 0; i < 4; i++)
+  {
+    record_t test = compute_mean(node, i);
+    record_t test2 = compute_std(node,compute_mean(node, i),i);
+    for (int j = 0; j < 3; j++)
+    {
+      split_set[i] = test.acc[i] + test2.acc[i] * getInverseCDFValue(i/(k+1));
+    }
+    split_set[i] = test.press + test2.press * getInverseCDFValue(i/(k+1));
+  }
+
+  if (k == 1)
+  {
+    float maximum = 0.0f;
+    for (int i = 0; i < 4; i++)
+    {
+      if (split_set[i] > maximum)
+        maximum = split_set[i];
+    }
+    
+    return maximum;
+  }
+  if (k == 2)
+  {
+    float maximum[2] = {0.0f, 0.0f};
+    for (int i = 0; i < 4; i++)
+    {
+      if (split_set[i] > maximum[0])
+      {
+        maximum[0] = split_set[i];
+        maximum[1] = maximum[0]; 
+      }
+      
+      /* If arr[i] is in between first and  
+      second then update second  */
+      else if (split_set[i] > maximum[1] && split_set[i] != maximum[0]) 
+        maximum[1] = split_set[i]; 
+      
+      float minimum[2] = {10000.0f, 10000.0f};
+      int min_idx = 0;
+      for (int j = 0; j < 4; j++)
+        for (int i = 0; i < 2; i++)
+        {
+          if (compute_gini(node, maximum[i], i) < minimum[i])
+          {
+            minimum[i] = compute_gini(node, maximum[i], j);
+            min_idx = i;
+          }
+        }
+      return maximum[min_idx];
+    }
+    if (k == 3)
+    {
+      float maximum[3] = {0.0f, 0.0f, 0.0f};
+      for (int i = 0; i < 4; i++)
+      {
+        if (split_set[i] > maximum[0])
+          maximum[0] = split_set[i];
+        if (split_set[i] > maximum[1] && split_set[i] < maximum[0]) 
+          maximum[1] = split_set[i]; 
+        if (split_set[i] > maximum[2] && split_set[i] < maximum[1]) 
+          maximum[2] = split_set[i];
+      }
+    
+    float minimum[3] = {10000.0f, 10000.0f, 10000.0f};
+    int min_idx = 0;
+    for (int j = 0; j < 4; j++)
+      for (int i = 0; i < 3; i++)
+      {
+        if (compute_gini(node, maximum[i], i) < minimum[i])
+        {
+          minimum[i] = compute_gini(node, maximum[i], j);
+          min_idx = i;
+        }
+      }
+    return maximum[min_idx];
+    }
+  }
+  return 0.0f; // shouldnt happen, function is available for n < 4 split points
+}
+
 result calculate_split_points(node_t * node)
 {
   result res;
@@ -1057,7 +1198,7 @@ result calculate_split_points(node_t * node)
   record_t std_down_ver = compute_std(node, peak_down_ver, 1);
   record_t std_up_hor = compute_std(node, peak_up_hor, 2);
   record_t std_up_ver = compute_std(node, peak_up_ver, 3);
- 
+  
   for (int i = 0; i < 3; ++i)
   {
     res.down.acc[i] = get_split_point(peak_down_hor.acc[i], peak_down_ver.acc[i], std_down_hor.acc[i], std_down_ver.acc[i]);
@@ -1082,6 +1223,11 @@ result calculate_split_points(node_t * node)
   
   res.wf.press = get_split_point(mean_down.press, mean_up.press, std_down.press, std_up.press);
 
+//  // experimental one ¯\_(-.-)_/¯ 
+//  float * test = get_split(node, node->label, 1);
+//  snprintf(dataOut, MAX_BUF_SIZE, "\r\nTest: %.3f\r\n", test);
+//  HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+  
   return res;
 }
 
@@ -1108,7 +1254,12 @@ float compute_gini(const node_t * node, float split_point, int dim)
 {
   int down_hor = 0, down_ver = 0, up_hor = 0, up_ver = 0;
   int num_valid = 0;
-  
+
+  snprintf(dataOut, MAX_BUF_SIZE, "\r\nSplit: %.3f", split_point);
+  HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+  snprintf(dataOut, MAX_BUF_SIZE, " for dimension %d\r\n\r\n", dim);
+  HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+
   for (int i = 0; i < NUM_CALIB; ++i)
   {
     if (!is_used(&(node->idx), i))
@@ -1116,8 +1267,8 @@ float compute_gini(const node_t * node, float split_point, int dim)
         // 0 means moving down horizontally, 1 down vertically, 2 means up horizontally, 3 means up vertically 
     num_valid += 1;
         
-    if (dim_data(&node->data[i].data, dim) < split_point)
-    {
+//    if (dim_data(&node->data[i].data, dim) < split_point)
+//    {
       if (node->data[i].label == 0) // down
       {
         ++down_hor;
@@ -1138,10 +1289,10 @@ float compute_gini(const node_t * node, float split_point, int dim)
         ++up_ver;
       }
     }
-  }
-//  snprintf(dataOut, MAX_BUF_SIZE, "\r\nDown GTE %d Down LT: %d\r\n", down_gte, down_lt);
+//  }
+//  snprintf(dataOut, MAX_BUF_SIZE, "\r\nDown GTE %d Down LT: %d\r\n", down_hor, down_ver);
 //  HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
-//  snprintf(dataOut, MAX_BUF_SIZE, "\r\nUp GTE %d Up LT: %d\r\n", up_gte, up_lt);
+//  snprintf(dataOut, MAX_BUF_SIZE, "\r\nUp GTE %d Up LT: %d\r\n", up_hor, up_ver);
 //  HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
   
   int num_wk = down_hor + down_ver;
@@ -1151,7 +1302,7 @@ float compute_gini(const node_t * node, float split_point, int dim)
     gini_wk = 1 - square(down_ver / num_wk) - square(down_hor / num_wk);
   }
 
-//snprintf(dataOut, MAX_BUF_SIZE, "\r\nGini DOWN: %.3f\r\n", gini_down);
+//snprintf(dataOut, MAX_BUF_SIZE, "\r\nGini DOWN: %.3f\r\n", gini_wk);
 //HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
   
   int num_fl = up_hor + up_ver;
@@ -1161,9 +1312,12 @@ float compute_gini(const node_t * node, float split_point, int dim)
     gini_fl = 1 - square(up_hor / num_fl) - square(up_ver / num_fl);
   }
   
-//snprintf(dataOut, MAX_BUF_SIZE, "\r\nGini UP: %.3f\r\n", gini_up);
+//snprintf(dataOut, MAX_BUF_SIZE, "\r\nGini UP: %.3f\r\n", gini_fl);
 //HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
   
+//  snprintf(dataOut, MAX_BUF_SIZE, "\r\nGini complete: %.3f\r\n", (gini_wk * num_wk + gini_fl * num_fl) / num_valid);
+//  HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+ 
   return (gini_wk * num_wk + gini_fl * num_fl) / num_valid;
 }
 
@@ -1216,7 +1370,7 @@ void split_node(node_t * node)
   
   for (int i = 3; i >= 0; --i)
   {
-    float gini_cur2 = compute_gini(node, dim_data(&split_points_up, i), i);
+    float gini_cur2 = compute_gini(node, dim_data(&split_points_down, i), i);
     if (gini_cur2 < min_val2)
     {
       min_val2 = gini_cur2;
@@ -1226,7 +1380,7 @@ void split_node(node_t * node)
   
   for (int i = 3; i >= 0; --i)
   {
-    float gini_cur3 = compute_gini(node, dim_data(&split_points_up, i), i);
+    float gini_cur3 = compute_gini(node, dim_data(&split_points_wf, i), i);
     if (gini_cur3 < min_val3)
     {
       min_val3 = gini_cur3;
@@ -1529,6 +1683,10 @@ void print_node_WEKA_J48(const node_t * node, int depth)
   lsm6dsox_pin_int2_route_get(&ag_ctx, &int2_route);
   int2_route.mlc_int2.int2_mlc1 = PROPERTY_ENABLE;
   lsm6dsox_pin_int2_route_set(&ag_ctx, &int2_route);
+      
+//  double i = getInverseCDFValue(0.852);
+//  snprintf(dataOut, MAX_BUF_SIZE, "\r\n%.3f", i);
+//  HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
       
   /* Infinite loop */
   while (1)

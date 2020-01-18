@@ -114,12 +114,6 @@ typedef struct fifo_record {
   record_t mean;
 } fifo_record_t;
 
-typedef struct result {
-  record_t down;
-  record_t up;
-  record_t wf;
-} result;
-
 typedef struct features_t
 {
   float data[NUM_FEATURES];
@@ -194,8 +188,8 @@ void USARTConfig(void);
 void ErrorHandler(void);
 fifo_record_t read_it_my_boy(void);
 // void class_it_my_boy(float max, float min, int idx_max, int idx_min);
-record_t compute_mean(const node_t * node, char label);
-record_t compute_std(const node_t * node, record_t records_mean, char label);
+void compute_mean(const node_t * node, features_t * features, char label);
+void compute_std(const node_t * node, const features_t * mean, features_t * features, char label);
 float compute_gini(const node_t * node, float split_point, int dim);
 float dim_data(const record_t * data, int dim);
 static float square(float val);
@@ -340,30 +334,6 @@ void lsm6dsox_hub_fifo_lps22hh(void)
   return;
 }
 
-//void class_it_my_boy(float max, float min, int idx_max, int idx_min)
-//{
-//  float tsh = 0.05f;
-//    
-//  if ((max - min) >= tsh)
-//  {
-//    if (idx_min > idx_max)
-//    {
-//      snprintf(dataOut, MAX_BUF_SIZE, "\r\nCLASSIFIED MLC: UP\r\n");
-//      HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
-//    }
-//    else
-//    {
-//      snprintf(dataOut, MAX_BUF_SIZE, "\r\nCLASSIFIED MLC: DOWN\r\n");
-//      HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
-//    }
-//  }
-//  else
-//  {
-//    snprintf(dataOut, MAX_BUF_SIZE, "\r\nCLASSIFIED MLC: SAME\r\n");
-//    HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
-//  }
-//}
-
 char getUserInput(UART_HandleTypeDef *huart, char * welcomeMSG, char * validOptions)
 {
   uint8_t tmp = 0, res = 0;
@@ -395,7 +365,7 @@ char getUserInput(UART_HandleTypeDef *huart, char * welcomeMSG, char * validOpti
   }
 }
 
-// use label -1 for computing means of all axes
+// use label 255 for computing means of all axes
 void compute_mean(const node_t * node, features_t * features, char label)
 {
   memset(&features, 0, sizeof(features_t));
@@ -403,7 +373,7 @@ void compute_mean(const node_t * node, features_t * features, char label)
   int num_rec = 0;
   for (int i = 0; i < NUM_CALIB; ++i)
   { 
-    if ((label != -1 && node->data[i].label != label) || !is_used(&(node->idx), i)) 
+    if ((label != 255 && node->data[i].label != label) || !is_used(&(node->idx), i)) 
     { 
       continue; 
     }
@@ -426,7 +396,7 @@ void compute_mean(const node_t * node, features_t * features, char label)
 }
 
 // label 0 means down, 1 up
-// use label -1 for computing means of all axes
+// use label 255 for computing means of all axes
 void compute_std(const node_t * node, const features_t * mean, features_t * features, char label)
 {
   memset(&features, 0, sizeof(features_t));
@@ -434,7 +404,7 @@ void compute_std(const node_t * node, const features_t * mean, features_t * feat
   int num_rec = 0;
   for (int i = 0; i < NUM_CALIB; ++i)
   {
-    if ((label != -1 && node->data[i].label != label) || !is_used(&(node->idx), i)) 
+    if ((label != 255 && node->data[i].label != label) || !is_used(&(node->idx), i)) 
     { 
       continue; 
     }
@@ -628,8 +598,6 @@ fifo_record_t read_it_my_boy(void)
             data_raw_press_temp.u8bit[0] = 0x00; /* remove status register */
             if (pressID >= (watermark/3)) { break; }
             record[pressID].press = lps22hh_from_lsb_to_hpa( data_raw_press_temp.p_and_t.u32bit);
-//            snprintf(dataOut, MAX_BUF_SIZE, "Press %d\r\n",data_raw_press_temp.p_and_t.u32bit);
-//            HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
             ++pressID;
             break;
 
@@ -643,8 +611,6 @@ fifo_record_t read_it_my_boy(void)
       uint8_t nRecords = accID > pressID ? pressID : accID;
       for (uint8_t k = 0; k < nRecords; ++k) {
         record_t * cur = &record[k];
-//        snprintf(dataOut, MAX_BUF_SIZE, "Record number %d: acc.x: %.3f, acc.y: %.3f, acc.z: %.3f, pressure: %.3f\r\n",k+1, cur->acc[0], cur->acc[1], cur->acc[2], cur->press);
-//        HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
         
         output.fifo[k].acc[0] = cur->acc[0];
         output.fifo[k].acc[1] = cur->acc[1];
@@ -661,9 +627,6 @@ fifo_record_t read_it_my_boy(void)
         records_mean.acc[1] /= nRecords;
         records_mean.acc[2] /= nRecords;
         records_mean.press /= nRecords;
-        
-//        snprintf(dataOut, MAX_BUF_SIZE, "MEAN: acc.x: %.3f, acc.y: %.3f, acc.z: %.3f, pressure: %.3f\r\n\r\n", records_mean.acc[0], records_mean.acc[1], records_mean.acc[2], records_mean.press);
-//        HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
                
         output.mean = records_mean;
         return output;
@@ -1000,32 +963,32 @@ static int32_t platform_read(void *handle, uint8_t Reg, uint8_t *Bufp,
   return 0;
 }
 
-float get_split_point(float m1, float m2, float o1, float o2)
-{
-    float tmp;
-    if (m1 > m2) // swap
-    {
-      tmp = m1;
-      m1 = m2;
-      m2 = tmp;
-      
-      tmp = o1; // swap stds
-      o1 = o2;
-      o2 = tmp;
-    }
-    // d = m2 - m1, alfa = o1 / (o1 + o2), split = m1 + alfa * d;
-    
-    float dist = m2 - m1;
-    tmp = o1 + o2;
-    if (tmp < 1e-7) {
-      tmp = 0.5f;
-    }
-    else {
-      tmp = o1 / tmp;
-    }
-    
-    return m1 + tmp * dist;
-}
+//float get_split_point(float m1, float m2, float o1, float o2)
+//{
+//    float tmp;
+//    if (m1 > m2) // swap
+//    {
+//      tmp = m1;
+//      m1 = m2;
+//      m2 = tmp;
+//      
+//      tmp = o1; // swap stds
+//      o1 = o2;
+//      o2 = tmp;
+//    }
+//    // d = m2 - m1, alfa = o1 / (o1 + o2), split = m1 + alfa * d;
+//    
+//    float dist = m2 - m1;
+//    tmp = o1 + o2;
+//    if (tmp < 1e-7) {
+//      tmp = 0.5f;
+//    }
+//    else {
+//      tmp = o1 / tmp;
+//    }
+//    
+//    return m1 + tmp * dist;
+//}
 
 static int count_valid_pts(const node_t * node)
 {
@@ -1051,10 +1014,10 @@ typedef struct pointDim
 pointDim get_best_split(const node_t * node)
 {
   int nValid = count_valid_pts(node);
-  int k = sqrt(nValid);
+  int k = sqrt(nValid); // floor
   features_t mean, std;
-  compute_mean(node,&mean, -1);  
-  compute_std(node, &mean, &std, -1);
+  compute_mean(node,&mean, 255);  
+  compute_std(node, &mean, &std, 255);
   
   pointDim best = {0, -1};
   float giniBest = 1.0f, split_point;
@@ -1076,38 +1039,6 @@ pointDim get_best_split(const node_t * node)
   
   return best; // will return dim == -1 in case of failure
 }
-
-//result calculate_split_points(node_t * node)
-//{
-//  result res;
-//// 0 means moving down horizontally, 1 down vertically, 2 means up horizontally, 3 means up vertically fman
-//  
-//  for (int i = 0; i < 3; ++i)
-//  {
-//    res.down.acc[i] = get_split_point(peak_down_hor.acc[i], peak_down_ver.acc[i], std_down_hor.acc[i], std_down_ver.acc[i]);
-//  }
-//  res.down.press = get_split_point(peak_down_hor.press, peak_down_ver.press, std_down_hor.press, std_down_ver.press);
-//  
-//  for (int i = 0; i < 3; ++i)
-//  {
-//    res.up.acc[i] = get_split_point(peak_up_hor.acc[i], peak_up_ver.acc[i], std_up_hor.acc[i], std_up_ver.acc[i]);
-//  }
-//  res.up.press = get_split_point(peak_up_hor.press, peak_up_ver.press, std_up_hor.press, std_up_ver.press);
-//  
-//  record_t mean_up = compute_mean(node, 2 );
-//  record_t mean_down = compute_mean(node, 0);
-//  record_t std_up = compute_std(node, mean_up, 2 );
-//  record_t std_down = compute_std(node, mean_down, 0);
-//  
-//  for (int i = 0; i < 3; ++i)
-//  {
-//    res.wf.acc[i] = get_split_point(mean_down.acc[i], mean_up.acc[i], std_down.acc[i], std_up.acc[i]);
-//  }
-//  
-//  res.wf.press = get_split_point(mean_down.press, mean_up.press, std_down.press, std_up.press);
-//  
-//  return res;
-//}
 
 float dim_data(const record_t * data, int dim)
 {
@@ -1314,30 +1245,6 @@ void J48_output_maker(const node_t * node)
     return;
   }
   
-//  char used_array[NUM_CALIB + 1];
-//  for (int i = 0; i < NUM_CALIB; ++i)
-//  {
-//    used_array[i] = is_used(&(node->idx), i) ? 'Y' : 'N';
-//  }
-//  used_array[NUM_CALIB] = '\0';
-  
-//  uint8_t isLeaf = (node->son == NULL) && (node->daughter == NULL);
-  
-//  snprintf(dataOut, MAX_BUF_SIZE, "\r\nNode addr: %p, son addr: %p, dght addr: %p, cntUp: %d, cntDown: %d, usedArray: %s\r\nSplit point: %.3f Split dim: %d Label: %s Error: %.3f\r\n",
-//           node, node->son, node->daughter, node->cntUp, node->cntDown, used_array, node->val, node->dim, (node->label ? "Up" : "Down"), node->error);
-//  HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
-//  
-//  if (isLeaf)
-//  {
-//  snprintf(dataOut, MAX_BUF_SIZE, "Label: %s\r\n", (node->label ? "Up" : "Down"));
-//  HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
-//  }
-//  else
-//  {
-//  snprintf(dataOut, MAX_BUF_SIZE, "\r\nSplit dim: %d < Split point: %.3f\r\n", node->dim, node->val);
-//  HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
-//  }
-  
   J48_output_maker(node->son);
   J48_output_maker(node->daughter);
 }
@@ -1400,12 +1307,12 @@ void print_node_WEKA_J48(const node_t * node, int depth)
       dataOut[length++] = '|';
       dataOut[length++] = '\t';
     }
-    snprintf(dataOut + length, MAX_BUF_SIZE - length, "%s < %.03f", dim2text[node->dim], node->split[0]);
-    HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
-    snprintf(dataOut + length, MAX_BUF_SIZE - length, "%s < %.03f", dim2text[node->dim], node->split[1]);
-    HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
-    snprintf(dataOut + length, MAX_BUF_SIZE - length, "%s < %.03f", dim2text[node->dim], node->split[2]);
-    HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+//    snprintf(dataOut + length, MAX_BUF_SIZE - length, "%s < %.03f", dim2text[node->dim], node->split[0]);
+//    HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+//    snprintf(dataOut + length, MAX_BUF_SIZE - length, "%s < %.03f", dim2text[node->dim], node->split[1]);
+//    HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+//    snprintf(dataOut + length, MAX_BUF_SIZE - length, "%s < %.03f", dim2text[node->dim], node->split[2]);
+//    HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
     
     print_node_WEKA_J48(node->son, depth + 1);
   }
@@ -1423,12 +1330,12 @@ void print_node_WEKA_J48(const node_t * node, int depth)
       dataOut[length++] = '|';
       dataOut[length++] = '\t';
     }
-    snprintf(dataOut + length, MAX_BUF_SIZE - length, "%s >= %.03f", dim2text[node->dim], node->split[0]);
-    HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
-    snprintf(dataOut + length, MAX_BUF_SIZE - length, "%s >= %.03f", dim2text[node->dim], node->split[1]);
-    HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
-    snprintf(dataOut + length, MAX_BUF_SIZE - length, "%s >= %.03f", dim2text[node->dim], node->split[2]);
-    HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+//    snprintf(dataOut + length, MAX_BUF_SIZE - length, "%s >= %.03f", dim2text[node->dim], node->split[0]);
+//    HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+//    snprintf(dataOut + length, MAX_BUF_SIZE - length, "%s >= %.03f", dim2text[node->dim], node->split[1]);
+//    HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+//    snprintf(dataOut + length, MAX_BUF_SIZE - length, "%s >= %.03f", dim2text[node->dim], node->split[2]);
+//    HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
     
     print_node_WEKA_J48(node->daughter, depth + 1);
   }
@@ -1487,13 +1394,7 @@ int main(void)
     Sleep_Mode();
   }
   
-  node_t * head = dec_tree_generator(data);
-//  for (int i = 0; i < NUM_CALIB; ++i)
-//  {
-//    snprintf(dataOut, MAX_BUF_SIZE, "\r\n data[%d] = (%.3f, %.3f, %.3f, %.3f, label: %d)", i, data[i].data.acc[0], data[i].data.acc[1], data[i].data.acc[2], data[i].data.press, data[i].label);
-//    HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
-//  }
-      
+  node_t * head = dec_tree_generator(data);      
   J48_output_maker(head);
   print_node_WEKA_J48(head, 0);
   
@@ -1504,13 +1405,13 @@ int main(void)
   lsm6dsox_mlc_data_rate_set(&ag_ctx, LSM6DSOX_ODR_PRGS_12Hz5);
   
   fifo_record_t data_out;
-  memset(&data_out, 0, sizeof(fifo_record_t));
-  record_t data_max;
-  memset(&data_max, 0, sizeof(data_max));
-  record_t data_min;
-  memset(&data_min, 0, sizeof(data_min));
-  record_t data_peak;
-  memset(&data_peak, 0, sizeof(data_peak));
+//  memset(&data_out, 0, sizeof(fifo_record_t));
+//  record_t data_max;
+//  memset(&data_max, 0, sizeof(data_max));
+//  record_t data_min;
+//  memset(&data_min, 0, sizeof(data_min));
+//  record_t data_peak;
+//  memset(&data_peak, 0, sizeof(data_peak));
   int reg2 = 0;
   
   // set MLC status interrupt on pin2
@@ -1518,10 +1419,6 @@ int main(void)
   lsm6dsox_pin_int2_route_get(&ag_ctx, &int2_route);
   int2_route.mlc_int2.int2_mlc1 = PROPERTY_ENABLE;
   lsm6dsox_pin_int2_route_set(&ag_ctx, &int2_route);
-      
-//  double i = getInverseCDFValue(0.852);
-//  snprintf(dataOut, MAX_BUF_SIZE, "\r\n%.3f", i);
-//  HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
       
   /* Infinite loop */
   while (1)
@@ -1549,62 +1446,24 @@ int main(void)
     if (button_pressed)
     {        
       data_out = read_it_my_boy();
-      data_max = compute_max(data_out.fifo);
-      data_min = compute_min(data_out.fifo);
-      data_peak = compute_peak_to_peak(data_max, data_min);
+//      data_max = compute_max(data_out.fifo);
+//      data_min = compute_min(data_out.fifo);
+//      data_peak = compute_peak_to_peak(data_max, data_min);
               
-//      for (int i = 0; i < NUM_RECORDS; i++)
-//      {
-//        snprintf(dataOut, MAX_BUF_SIZE, "\r\n%.3f, %.3f, %.3f, %.3f", data_out.fifo[i].acc[0], data_out.fifo[i].acc[1], data_out.fifo[i].acc[2], data_out.fifo[i].press);
-//        HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
-//      }
-      snprintf(dataOut, MAX_BUF_SIZE, "\r\n%.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, ",
-               data_out.mean.acc[0], data_out.mean.acc[1], data_out.mean.acc[2], data_out.mean.press,
-               data_max.acc[0], data_max.acc[1], data_max.acc[2], data_max.press,
-               data_min.acc[0], data_min.acc[1], data_min.acc[2], data_min.press,
-               data_peak.acc[0], data_peak.acc[1], data_peak.acc[2], data_peak.press);
-      HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+      for (int i = 0; i < NUM_RECORDS; i++)
+      {
+        snprintf(dataOut, MAX_BUF_SIZE, "\r\n%.3f, %.3f, %.3f, %.3f", data_out.fifo[i].acc[0], data_out.fifo[i].acc[1], data_out.fifo[i].acc[2], data_out.fifo[i].press);
+        HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+      }
+//      snprintf(dataOut, MAX_BUF_SIZE, "\r\n%.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, ",
+//               data_out.mean.acc[0], data_out.mean.acc[1], data_out.mean.acc[2], data_out.mean.press,
+//               data_max.acc[0], data_max.acc[1], data_max.acc[2], data_max.press,
+//               data_min.acc[0], data_min.acc[1], data_min.acc[2], data_min.press,
+//               data_peak.acc[0], data_peak.acc[1], data_peak.acc[2], data_peak.press);
+//      HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
       
-//      snprintf(dataOut, MAX_BUF_SIZE, "\r\n");
-//      HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
-//      snprintf(dataOut, MAX_BUF_SIZE, "\r\n F1_MEAN %.3f, %.3f, %.3f, %.3f", data_out.mean.acc[0], data_out.mean.acc[1], data_out.mean.acc[2], data_out.mean.press);
-//      HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
-//      snprintf(dataOut, MAX_BUF_SIZE, "\r\n F2_MAX %.3f, %.3f, %.3f, %.3f", data_max.acc[0], data_max.acc[1], data_max.acc[2], data_max.press);
-//      HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
-//      snprintf(dataOut, MAX_BUF_SIZE, "\r\n F3_MIN %.3f, %.3f, %.3f, %.3f", data_min.acc[0], data_min.acc[1], data_min.acc[2], data_min.press);
-//      HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
-//      snprintf(dataOut, MAX_BUF_SIZE, "\r\n F4_PEAK_TO_PEAK %.3f, %.3f, %.3f, %.3f", data_peak.acc[0], data_peak.acc[1], data_peak.acc[2], data_peak.press);
-//      HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
       snprintf(dataOut, MAX_BUF_SIZE, "\r\n \r\n");
       HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
-      /* _NOTE_: Pushing button creates interrupt/event and wakes up MCU from sleep mode */
-//      record_t data[3];
-//      memset(&data, 0, sizeof(data));
-//      
-//      float min = 1000000.0f;
-//      float max = 0.0f;
-//      int idx_min = 0;
-//      int idx_max = 0;
-//      
-//      for (int i = 0; i < 3; ++i)
-//      {
-//        data[i] = read_it_my_boy();
-//        if (data[i].press > max)
-//        {
-//          max = data[i].press;
-//          idx_max = i;
-//        }
-//        if (data[i].press < min)
-//        {
-//          min = data[i].press;
-//          idx_min = i;
-//        }
-//      }
-//      
-//      snprintf(dataOut, MAX_BUF_SIZE, "\r\nPEAK TO PEAK: %f\r\n", (max - min));
-//      HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
-//      
-//      class_it_my_boy(max, min, idx_max, idx_min);
       
       /* Reset FIFO by setting FIFO mode to Bypass */
       lsm6dsox_fifo_mode_set(&ag_ctx, LSM6DSOX_BYPASS_MODE);

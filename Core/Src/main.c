@@ -53,6 +53,7 @@ extern  I2C_HandleTypeDef I2C_EXPBD_Handle;
 #define INT2_master_Pin          GPIO_PIN_1
 #define BUTTONn                  1
 #define NUM_CALIB                4
+#define NUM_FEATURES             20
 
 GPIO_TypeDef* BUTTON_PORT[BUTTONn] = {KEY_BUTTON_GPIO_PORT};
 const uint16_t BUTTON_PIN[BUTTONn] = {KEY_BUTTON_PIN};
@@ -119,9 +120,14 @@ typedef struct result {
   record_t wf;
 } result;
 
+typedef struct features_t
+{
+  float data[NUM_FEATURES];
+} features_t;
+
 typedef struct labeled_record {
-  record_t data;
-  char label; // 0 means moving down horizontally, 1 down vertically, 2 means up horizontally, 3 means up vertically 
+  features_t features;
+  int8_t label; // 0 means moving down horizontally, 1 down vertically, 2 means up horizontally, 3 means up vertically 
 } labeled_record;
 
 typedef struct indexer
@@ -151,9 +157,9 @@ uint8_t is_used(const indexer * idx, int id)
   return (idx->hint[id / 8] & (1 << (id % 8))) ? 1 : 0;
 }
 
-typedef struct node {
-  float split[3]; // split points
-  uint8_t dim; // column where the data set is split
+typedef struct node_t {
+  float split;
+  uint8_t dim; // column where the data set is split, feature ID
   uint8_t label;
   float error; // fraction of opposite labeled data points
   int cnt[4];
@@ -161,8 +167,8 @@ typedef struct node {
   indexer idx; // stores which data points are for this node
   labeled_record * data; // p0inter to all data
   
-  struct node * son; // left
-  struct node * daughter; // right
+  struct node_t * son; // left
+  struct node_t * daughter; // right
 } node_t;
 
 /* Private variables ---------------------------------------------------------*/
@@ -390,10 +396,9 @@ char getUserInput(UART_HandleTypeDef *huart, char * welcomeMSG, char * validOpti
 }
 
 // use label -1 for computing means of all axes
-record_t compute_mean(const node_t * node, char label)
+void compute_mean(const node_t * node, features_t * features, char label)
 {
-  record_t records_mean;
-  memset(&records_mean, 0, sizeof(records_mean));
+  memset(&features, 0, sizeof(features_t));
   
   int num_rec = 0;
   for (int i = 0; i < NUM_CALIB; ++i)
@@ -402,31 +407,29 @@ record_t compute_mean(const node_t * node, char label)
     { 
       continue; 
     }
-        
-    const record_t * data = &(node->data[i].data);
-
-    records_mean.acc[0] += data->acc[0];
-    records_mean.acc[1] += data->acc[1];
-    records_mean.acc[2] += data->acc[2];
-    records_mean.press += data->press;
-    
-    ++num_rec;
+      
+    const labeled_record * record = &(node->data[i]);
+    for (int k = 0; k < NUM_FEATURES; ++k)
+    {
+       features->data[k] += record->features.data[k];
+    }
+    ++num_rec; 
   }
   
-    records_mean.acc[0] /= num_rec;
-    records_mean.acc[1] /= num_rec;
-    records_mean.acc[2] /= num_rec;
-    records_mean.press /= num_rec;
-    
-    return records_mean;
+  if (num_rec)
+  {
+    for (int k = 0; k < NUM_FEATURES; ++k)
+    {
+      features->data[k] /= num_rec;
+    }
+  }
 }
 
 // label 0 means down, 1 up
 // use label -1 for computing means of all axes
-record_t compute_std(const node_t * node, record_t records_mean, char label)
+void compute_std(const node_t * node, const features_t * mean, features_t * features, char label)
 {
-  record_t records_std;
-  memset(&records_std,0,sizeof(records_std));
+  memset(&features, 0, sizeof(features_t));
   
   int num_rec = 0;
   for (int i = 0; i < NUM_CALIB; ++i)
@@ -436,159 +439,79 @@ record_t compute_std(const node_t * node, record_t records_mean, char label)
       continue; 
     }
     
-    const record_t * data = &(node->data[i].data);
-    
-    records_std.acc[0] += square(data->acc[0] - records_mean.acc[0]);
-    records_std.acc[1] += square(data->acc[1] - records_mean.acc[1]);
-    records_std.acc[2] += square(data->acc[2] - records_mean.acc[2]);
-    records_std.press += square(data->press - records_mean.press);
-    
+    const labeled_record * record = &(node->data[i]);
+    for (int k = 0; k < NUM_FEATURES; ++k)
+    {
+       features->data[k] += square(record->features.data[k] - mean->data[k]);
+    }
     ++num_rec;
   }
   
   if (num_rec > 1)
   {
-    records_std.acc[0] /= num_rec - 1;
-    records_std.acc[1] /= num_rec - 1;
-    records_std.acc[2] /= num_rec - 1;
-    records_std.press /= num_rec - 1;
-    
-    records_std.acc[0] = sqrt(records_std.acc[0]);
-    records_std.acc[1] = sqrt(records_std.acc[1]);
-    records_std.acc[2] = sqrt(records_std.acc[2]);
-    records_std.press = sqrt(records_std.press);
+    for (int k = 0; k < NUM_FEATURES; ++k)
+    {
+      features->data[k] /= num_rec - 1;
+      features->data[k] = sqrt(features->data[k]);
+    }
   }
-  
-  return records_std;
 }
 
-record_t compute_min(record_t data[])
+record_t compute_min(const record_t data[])
 {
-  record_t records_min;
-  memset(&records_min, 0, sizeof(records_min));
+  record_t records_min = data[0];
   
-  float min[4] = {10000.0f, 10000.0f, 10000.0f, 10000.0f};
-  for (int j = 0; j < NUM_RECORDS; ++j)
+  for (int j = 1; j < NUM_RECORDS; ++j)
   { 
     for (int i = 0; i < 3; i++)
     {
-      if (data[j].acc[i] < min[i])
-        min[i] = data[j].acc[i];
+      if (data[j].acc[i] < records_min.acc[i])
+      {
+        records_min.acc[i] = data[j].acc[i];
+      }
     }
-    if (data[j].press < min[3])
-      min[3] = data[j].press;
+    if (data[j].press < records_min.press)
+    {
+      records_min.press = data[j].press;
+    }
   }
 
-  for (int i = 0; i < 3; i++)
-    records_min.acc[i] = min[i];
-  records_min.press = min[3];
   return records_min;
 }
 
-record_t compute_max(record_t data[])
+record_t compute_max(const record_t data[])
 {
-  record_t records_max;
-  memset(&records_max, 0.0f, sizeof(records_max));
+  record_t records_max = data[0];
   
-  float max[4] = {-999.0f, -999.0f, -999.0f, -999.0f};
-  for (int j = 0; j < NUM_RECORDS; ++j)
+  for (int j = 1; j < NUM_RECORDS; ++j)
   {
-    for (int i = 0; i < 3; i++)
+    for (int i = 0; i < 4; ++i)
     {
-    if (data[j].acc[i] > max[i])
-      max[i] = data[j].acc[i];
+      if (dim_data(&data[j], i) > dim_data(&records_max, i))
+      {
+        if (i == 3)
+        {
+          records_max.press = data[j].press;
+        }
+        else
+        {
+          records_max.acc[i] = data[j].acc[i];
+        }
+      }
     }
-    if (data[j].press > max[3])
-      max[3] = data[j].press;
   }
 
-  for (int i = 0; i < 3; i++)
-    records_max.acc[i] = max[i];
-  records_max.press = max[3];
   return records_max;
 }
 
-record_t compute_peak_to_peak(record_t records_max, record_t records_min)
+record_t compute_peak_to_peak(const record_t * records_max, const record_t * records_min)
 {
   record_t peak;
-  memset(&peak, 0, sizeof(peak));
   for (int i = 0; i < 3; i++)
   {
-      peak.acc[i] = records_max.acc[i] - records_min.acc[i];
+      peak.acc[i] = records_max->acc[i] - records_min->acc[i];
   }
-  peak.press = records_max.press - records_min.press;
-  return peak;
-}
-
-record_t compute_min_for_node(const node_t * node, char label)
-{
-  record_t records_min;
-  memset(&records_min, 0, sizeof(records_min));
-  
-  float min[4] = {10000.0f, 10000.0f, 10000.0f, 10000.0f};
-  for (int i = 0; i < NUM_CALIB; ++i)
-  { 
-    if (node->data[i].label != label || !is_used(&(node->idx), i)) 
-    { 
-      continue; 
-    }
-        
-    const record_t * data = &(node->data[i].data);
-
-    for (int j = 0; j < 3; j++)
-    {
-    if (data->acc[j] < min[j])
-      min[j] = data->acc[j];
-    }
-    if (data->press < min[3])
-      min[3] = data->press;
-  }
-    
-  for (int i = 0; i < 3; i++)
-    records_min.acc[i] = min[i] / 2000;
-  records_min.press = min[3] / 1000;
-  return records_min;
-}
-
-record_t compute_max_for_node(const node_t * node, char label)
-{
-  record_t records_max;
-  memset(&records_max, 0, sizeof(records_max));
-  
-  float max[4] = {-999.0f, -999.0f, -999.0f, -999.0f};
-  for (int i = 0; i < NUM_CALIB; ++i)
-  { 
-    if (node->data[i].label != label || !is_used(&(node->idx), i)) 
-    { 
-      continue; 
-    }
-        
-    const record_t * data = &(node->data[i].data);
-
-    for (int j = 0; j < 3; j++)
-    {
-    if (data->acc[j] > max[j])
-      max[j] = data->acc[j];
-    }
-    if (data->press > max[3])
-      max[3] = data->press;
-  }
-    
-  for (int i = 0; i < 3; i++)
-    records_max.acc[i] = max[i] / 2000;
-  records_max.press = max[3] / 1000 ;
-  return records_max;
-}
-
-record_t compute_peak_to_peak_for_node(record_t records_max, record_t records_min)
-{
-  record_t peak;
-  memset(&peak, 0, sizeof(peak));
-  for (int i = 0; i < 3; i++)
-  {
-      peak.acc[i] = records_max.acc[i] - records_min.acc[i];
-  }
-  peak.press = records_max.press - records_min.press;
+  peak.press = records_max->press - records_min->press;
   return peak;
 }
 
@@ -1129,18 +1052,18 @@ pointDim get_best_split(const node_t * node)
 {
   int nValid = count_valid_pts(node);
   int k = sqrt(nValid);
-  record_t mean = compute_mean(node, -1);  
-  record_t std = compute_std(node, mean, -1);
+  features_t mean, std;
+  compute_mean(node,&mean, -1);  
+  compute_std(node, &mean, &std, -1);
   
   pointDim best = {0, -1};
-  float giniBest = 1.0f;
+  float giniBest = 1.0f, split_point;
   
-  for (int i = 0; i < 4; ++i)
+  for (int i = 0; i < NUM_FEATURES; ++i)
   {
-    float split_point;
     for (int j = 1; j <= k; ++j)
     {
-      split_point = dim_data(&mean, i) + dim_data(&std, i) * getInverseCDFValue(j /(k + 1));
+      split_point = mean.data[i] + std.data[i] * getInverseCDFValue(j /(k + 1));
       float gini = compute_gini(node, split_point, i);
       if (gini < giniBest)
       {
@@ -1154,50 +1077,37 @@ pointDim get_best_split(const node_t * node)
   return best; // will return dim == -1 in case of failure
 }
 
-result calculate_split_points(node_t * node)
-{
-  result res;
-// 0 means moving down horizontally, 1 down vertically, 2 means up horizontally, 3 means up vertically 
-  record_t peak_down_hor = compute_peak_to_peak_for_node(compute_max_for_node(node, 0), compute_min_for_node(node, 0));
-  record_t peak_down_ver = compute_peak_to_peak_for_node(compute_max_for_node(node, 1), compute_min_for_node(node, 1));
-  record_t peak_up_hor = compute_peak_to_peak_for_node(compute_max_for_node(node, 2), compute_min_for_node(node, 2));
-  record_t peak_up_ver = compute_peak_to_peak_for_node(compute_max_for_node(node, 3), compute_min_for_node(node, 3));
-  record_t std_down_hor = compute_std(node, peak_down_hor, 0);
-  record_t std_down_ver = compute_std(node, peak_down_ver, 1);
-  record_t std_up_hor = compute_std(node, peak_up_hor, 2);
-  record_t std_up_ver = compute_std(node, peak_up_ver, 3);
-  
-  for (int i = 0; i < 3; ++i)
-  {
-    res.down.acc[i] = get_split_point(peak_down_hor.acc[i], peak_down_ver.acc[i], std_down_hor.acc[i], std_down_ver.acc[i]);
-  }
-  res.down.press = get_split_point(peak_down_hor.press, peak_down_ver.press, std_down_hor.press, std_down_ver.press);
-  
-  for (int i = 0; i < 3; ++i)
-  {
-    res.up.acc[i] = get_split_point(peak_up_hor.acc[i], peak_up_ver.acc[i], std_up_hor.acc[i], std_up_ver.acc[i]);
-  }
-  res.up.press = get_split_point(peak_up_hor.press, peak_up_ver.press, std_up_hor.press, std_up_ver.press);
-  
-  record_t mean_up = compute_mean(node, 2 );
-  record_t mean_down = compute_mean(node, 0);
-  record_t std_up = compute_std(node, mean_up, 2 );
-  record_t std_down = compute_std(node, mean_down, 0);
-  
-  for (int i = 0; i < 3; ++i)
-  {
-    res.wf.acc[i] = get_split_point(mean_down.acc[i], mean_up.acc[i], std_down.acc[i], std_up.acc[i]);
-  }
-  
-  res.wf.press = get_split_point(mean_down.press, mean_up.press, std_down.press, std_up.press);
-
-//  // experimental one ¯\_(-.-)_/¯ 
-//  float * test = get_split(node, node->label, 1);
-//  snprintf(dataOut, MAX_BUF_SIZE, "\r\nTest: %.3f\r\n", test);
-//  HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
-  
-  return res;
-}
+//result calculate_split_points(node_t * node)
+//{
+//  result res;
+//// 0 means moving down horizontally, 1 down vertically, 2 means up horizontally, 3 means up vertically fman
+//  
+//  for (int i = 0; i < 3; ++i)
+//  {
+//    res.down.acc[i] = get_split_point(peak_down_hor.acc[i], peak_down_ver.acc[i], std_down_hor.acc[i], std_down_ver.acc[i]);
+//  }
+//  res.down.press = get_split_point(peak_down_hor.press, peak_down_ver.press, std_down_hor.press, std_down_ver.press);
+//  
+//  for (int i = 0; i < 3; ++i)
+//  {
+//    res.up.acc[i] = get_split_point(peak_up_hor.acc[i], peak_up_ver.acc[i], std_up_hor.acc[i], std_up_ver.acc[i]);
+//  }
+//  res.up.press = get_split_point(peak_up_hor.press, peak_up_ver.press, std_up_hor.press, std_up_ver.press);
+//  
+//  record_t mean_up = compute_mean(node, 2 );
+//  record_t mean_down = compute_mean(node, 0);
+//  record_t std_up = compute_std(node, mean_up, 2 );
+//  record_t std_down = compute_std(node, mean_down, 0);
+//  
+//  for (int i = 0; i < 3; ++i)
+//  {
+//    res.wf.acc[i] = get_split_point(mean_down.acc[i], mean_up.acc[i], std_down.acc[i], std_up.acc[i]);
+//  }
+//  
+//  res.wf.press = get_split_point(mean_down.press, mean_up.press, std_down.press, std_up.press);
+//  
+//  return res;
+//}
 
 float dim_data(const record_t * data, int dim)
 {
@@ -1229,7 +1139,7 @@ static int sum4(const int * array)
   return res;
 }
 
-float compute_gini(const node_t * node, float split_point, int dim)
+float compute_gini(const node_t * node, float split_point, int dim) // feature dim
 {
   int gte[4];
   int lt[4];
@@ -1242,7 +1152,7 @@ float compute_gini(const node_t * node, float split_point, int dim)
     {continue;}
     
     // 0 means moving down horizontally, 1 down vertically, 2 means up horizontally, 3 means up vertically 
-    if (dim_data(&node->data[i].data, dim) < split_point)
+    if (node->data[i].features.data[dim] < split_point)
     {
       ++lt[node->data[i].label];
     }
@@ -1283,7 +1193,8 @@ void set_label(node_t * node)
     }
   }
   // set label
-  int max_val = 0, sum = 0;
+  int max_val = 0;
+  float sum = 0;
   for (int i = 0; i < 4; i++)
   {
     sum += array[i];
@@ -1294,78 +1205,30 @@ void set_label(node_t * node)
     }
     node->cnt[i] = array[i];
   }
-  node->error = (float)(sum - max_val) / sum;
+  
+  node->error = (sum ? (sum - max_val) / sum : -1);
 }
 
 void split_node(node_t * node)
 {  
-  record_t split_points_up = calculate_split_points(node).up;
-  record_t split_points_down = calculate_split_points(node).down;
-  record_t split_points_wf = calculate_split_points(node).wf;
-
-  float min_val1; float min_val2; float min_val3;
-  min_val1 = min_val2 = min_val3 = 100.0f;
-  uint8_t min_id1; uint8_t min_id2; uint8_t min_id3;
-  min_id1 = min_id2 = min_id3 = 255;
+  pointDim ptDim = get_best_split(node); // split point and dim of the best split
   
-  for (int i = 3; i >= 0; --i)
-  {
-    float gini_cur1 = compute_gini(node, dim_data(&split_points_up, i), i);
-    if (gini_cur1 < min_val1)
-    {
-      min_val1 = gini_cur1;
-      min_id1 = i;
-    }
-  }
-  
-  for (int i = 3; i >= 0; --i)
-  {
-    float gini_cur2 = compute_gini(node, dim_data(&split_points_down, i), i);
-    if (gini_cur2 < min_val2)
-    {
-      min_val2 = gini_cur2;
-      min_id2 = i;
-    }
-  }
-  
-  for (int i = 3; i >= 0; --i)
-  {
-    float gini_cur3 = compute_gini(node, dim_data(&split_points_wf, i), i);
-    if (gini_cur3 < min_val3)
-    {
-      min_val3 = gini_cur3;
-      min_id3 = i;
-    }
-  }
-  
-  int min_id = 255;
-  if (min_id1 <= min_id2 && min_id1 <= min_id3) 
-    min_id = min_id1;
-  
-  else if (min_id2 <= min_id1 && min_id2 <= min_id3) 
-    min_id = min_id2;
-  
-  else
-    min_id = min_id3;
-    
-  node->dim = min_id;
-  node->split[0] = dim_data(&split_points_up, min_id1); // split point
-  node->split[1] = dim_data(&split_points_down, min_id2); // split point
-  node->split[2] = dim_data(&split_points_wf, min_id3); // split point
+  node->dim = ptDim.dim;
+  node->split = ptDim.pt;
   node->son = node->daughter = NULL;
   
   // left one
   node_t * son = (node_t *)malloc(sizeof(node_t));
   son->daughter = son->son = NULL;
-  son->split[0] = son->split[1] = son->split[2] = 0;
-  son->dim = 0;
+  son->split = 0;
+  son->dim = -1;
   son->data = node->data;
   memcpy((void *) (&son->idx), (const void *) (&node->idx), sizeof(node->idx));
   
   uint8_t cnt = 0;
   for (int i = 0; i < NUM_CALIB; ++i)
   {
-    if (dim_data(&son->data[i].data, node->dim) >= (node->split[0]) || dim_data(&son->data[i].data, node->dim) >= (node->split[1]) || dim_data(&son->data[i].data, node->dim) >= (node->split[2]))
+    if (son->data[i].features.data[node->dim] >= node->split)
     {
       unset_index(&(son->idx), i);
     }
@@ -1374,6 +1237,7 @@ void split_node(node_t * node)
       ++cnt;
     }
   }
+  
   if (cnt > 0)
   {
     node->son = son;
@@ -1387,15 +1251,15 @@ void split_node(node_t * node)
   
   node_t * daughter = (node_t *)malloc(sizeof(node_t));
   daughter->daughter = daughter->son = NULL;
-  daughter->split[0] = daughter->split[1] = daughter->split[2] = 0;
+  daughter->split = 0;
   daughter->dim = 0;
   daughter->data = node->data;
-  memcpy((void *)(&daughter->idx), (void *)(&node->idx), sizeof(node->idx));
+  memcpy((void *)(&daughter->idx), (const void *)(&node->idx), sizeof(node->idx));
   
   cnt = 0;
   for (int i = 0; i < NUM_CALIB; ++i)
   {
-    if (dim_data(&daughter->data[i].data, node->dim) < node->split[0] || dim_data(&daughter->data[i].data, node->dim) < node->split[1] || dim_data(&daughter->data[i].data, node->dim) < node->split[2])
+    if (daughter->data[i].features.data[node->dim] < node->split)
     {
       unset_index(&(daughter->idx), i);
     }
@@ -1414,11 +1278,6 @@ void split_node(node_t * node)
     free(daughter);
     daughter = NULL;
   }
-  
-   if (min_val1 == 0 || min_val2 == 0 || min_val3 == 0) // min gini
-   {
-     return;
-   }
     
    if (node->son != NULL && node->son->error > 0)
    {
@@ -1575,7 +1434,42 @@ void print_node_WEKA_J48(const node_t * node, int depth)
   }
 }
 
- int main(void)
+void calculateFeatures(const fifo_record_t * data, features_t * features)
+{
+  record_t data_mean = data->mean;
+  record_t data_min = compute_min(data->fifo);
+  record_t data_max = compute_max(data->fifo);
+  record_t data_peak = compute_peak_to_peak(&data_max, &data_min);
+  
+  int numFeatPerAxes = 4;
+  for (int k = 0; k < numFeatPerAxes; ++k) // feature iteration
+  {
+    record_t * cur = NULL;
+    switch(k)
+    {
+    case 0:
+      cur = &data_mean;
+      break;
+    case 1:
+      cur = &data_min;
+      break;
+    case 2:
+      cur = &data_max;
+      break;
+    case 3:
+      cur = &data_peak;
+      break;
+    }
+    for (int i = 0; i < 4; ++i) // axis iteration
+    {
+      features->data[k * numFeatPerAxes + i] = dim_data(cur, i);
+    }
+  }
+}
+
+static const char * classified[] = {"down horizontally","down vertically","up horizontally","up vertically" };
+
+int main(void)
 {
   init();
   labeled_record data[NUM_CALIB];
@@ -1584,20 +1478,11 @@ void print_node_WEKA_J48(const node_t * node, int depth)
   for (int i = 0; i < NUM_CALIB; ++i)
   {
     /* _NOTE_: Pushing button creates interrupt/event and wakes up MCU from sleep mode */
-    data[i].data = read_it_my_boy().mean;
-    char tmp = getUserInput(&UartHandle, "For down horizontally type '0', for down vertically type '1'. For up horizontally type '2', for up vertically type '3'.", "0123");
-    data[i].label = tmp - '0'; // default is down (0)
+    fifo_record_t rec = read_it_my_boy();
+    data[i].label = getUserInput(&UartHandle, "For down horizontally type '0', for down vertically type '1'. For up horizontally type '2', for up vertically type '3'.", "0123");
+    calculateFeatures(&rec, &data[i].features);
     
-    static const char *classified[] = {"down horizontally","down vertically","up horizontally","up vertically" };
-    char text[20];
-    
-    for (int k = 0; k < 4; k++)
-    {
-      if (data[i].label == (char)k)
-        strcpy(text, classified[k]);
-    }
-      
-    snprintf(dataOut, MAX_BUF_SIZE, "\r\nClassified: %s \r\n", text);
+    snprintf(dataOut, MAX_BUF_SIZE, "\r\nClassified: %s \r\n", classified[data[i].label]);
     HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
     Sleep_Mode();
   }

@@ -22,11 +22,7 @@
 #include "gpio.h"
 #include "com.h"
 #include <math.h>
-#include <ctype.h>
 #include <stdlib.h>
-#include <stdio.h>
-#include <stdint.h>
-#include <string.h>
 #include "C:\IKS0LAB_SensorHub-modified\IKS0LAB_SensorHub\Drivers\lps22hh\lps22hh.h"
 #include "C:\IKS0LAB_SensorHub-modified\IKS0LAB_SensorHub\Drivers\lps22hh\lps22hh_reg.h"
 #include "C:\IKS0LAB_SensorHub-modified\IKS0LAB_SensorHub\Drivers\lsm6dsox\lsm6dsox.h"
@@ -44,16 +40,15 @@ extern  I2C_HandleTypeDef I2C_EXPBD_Handle;
 #define BSP_ERROR_NONE           0
 #define BSP_ERROR_WRONG_PARAM    -2
 #define BSP_ERROR_PERIPH_FAILURE -4
-#define USER_BUTTON_PIN          GPIO_PIN_13
+#define KEY_BUTTON_PIN          GPIO_PIN_13
 #define USER_BUTTON_GPIO_PORT    GPIOC
 #define USER_BUTTON_EXTI_IRQn    EXTI15_10_IRQn
-#define KEY_BUTTON_PIN           USER_BUTTON_PIN
 #define KEY_BUTTON_GPIO_PORT     USER_BUTTON_GPIO_PORT
 #define KEY_BUTTON_EXTI_IRQn     USER_BUTTON_EXTI_IRQn
 #define INT2_master_Pin          GPIO_PIN_1
 #define BUTTONn                  1
 #define NUM_CALIB                4
-#define NUM_FEATURES             20
+#define NUM_FEATURES             16
 
 GPIO_TypeDef* BUTTON_PORT[BUTTONn] = {KEY_BUTTON_GPIO_PORT};
 const uint16_t BUTTON_PIN[BUTTONn] = {KEY_BUTTON_PIN};
@@ -187,7 +182,6 @@ void  BSP_PB_Init(Button_TypeDef Button, ButtonMode_TypeDef ButtonMode);
 void USARTConfig(void);
 void ErrorHandler(void);
 fifo_record_t read_it_my_boy(void);
-// void class_it_my_boy(float max, float min, int idx_max, int idx_min);
 void compute_mean(const node_t * node, features_t * features, char label);
 void compute_std(const node_t * node, const features_t * mean, features_t * features, char label);
 float compute_gini(const node_t * node, float split_point, int dim);
@@ -1238,17 +1232,6 @@ node_t * dec_tree_generator(labeled_record data[] /* nRecords is NUM_CALIB */)
   return head;
 }
 
-void J48_output_maker(const node_t * node)
-{
-  if (node == NULL)
-  {
-    return;
-  }
-  
-  J48_output_maker(node->son);
-  J48_output_maker(node->daughter);
-}
-
 const char * dim2text[4] = { "ACC_X",
                              "ACC_Y",
                              "ACC_Z",
@@ -1264,7 +1247,7 @@ int sumator(const node_t * node)
 
 void print_node_WEKA_J48(const node_t * node, int depth)
 {  
-  uint8_t isLeaf = node->son == node->daughter; //(node->son == NULL) && (node->daughter == NULL);
+  uint8_t isLeaf = (node->son == node->daughter); //(node->son == NULL) && (node->daughter == NULL);
   int length = 0;
   memset(dataOut, 0, sizeof(dataOut));
   
@@ -1387,7 +1370,6 @@ int main(void)
   }
   
   node_t * head = dec_tree_generator(data);      
-  J48_output_maker(head);
   print_node_WEKA_J48(head, 0);
   
   Sleep_Mode();
@@ -1397,13 +1379,6 @@ int main(void)
   lsm6dsox_mlc_data_rate_set(&ag_ctx, LSM6DSOX_ODR_PRGS_12Hz5);
   
   fifo_record_t data_out;
-//  memset(&data_out, 0, sizeof(fifo_record_t));
-//  record_t data_max;
-//  memset(&data_max, 0, sizeof(data_max));
-//  record_t data_min;
-//  memset(&data_min, 0, sizeof(data_min));
-//  record_t data_peak;
-//  memset(&data_peak, 0, sizeof(data_peak));
   int reg2 = 0;
   
   // set MLC status interrupt on pin2
@@ -1438,21 +1413,12 @@ int main(void)
     if (button_pressed)
     {        
       data_out = read_it_my_boy();
-//      data_max = compute_max(data_out.fifo);
-//      data_min = compute_min(data_out.fifo);
-//      data_peak = compute_peak_to_peak(data_max, data_min);
               
       for (int i = 0; i < NUM_RECORDS; i++)
       {
         snprintf(dataOut, MAX_BUF_SIZE, "\r\n%.3f, %.3f, %.3f, %.3f", data_out.fifo[i].acc[0], data_out.fifo[i].acc[1], data_out.fifo[i].acc[2], data_out.fifo[i].press);
         HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
       }
-//      snprintf(dataOut, MAX_BUF_SIZE, "\r\n%.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, ",
-//               data_out.mean.acc[0], data_out.mean.acc[1], data_out.mean.acc[2], data_out.mean.press,
-//               data_max.acc[0], data_max.acc[1], data_max.acc[2], data_max.press,
-//               data_min.acc[0], data_min.acc[1], data_min.acc[2], data_min.press,
-//               data_peak.acc[0], data_peak.acc[1], data_peak.acc[2], data_peak.press);
-//      HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
       
       snprintf(dataOut, MAX_BUF_SIZE, "\r\n \r\n");
       HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);

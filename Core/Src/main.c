@@ -49,9 +49,9 @@ extern  I2C_HandleTypeDef I2C_EXPBD_Handle;
 #define KEY_BUTTON_EXTI_IRQn     USER_BUTTON_EXTI_IRQn
 #define INT2_master_Pin          GPIO_PIN_1
 #define BUTTONn                  1
-#define NUM_CALIB                4
+#define NUM_CALIB                30
 #define NUM_FEATURES             16
-#define NUM_TEST                 48
+#define TESTING                  1
 
 GPIO_TypeDef* BUTTON_PORT[BUTTONn] = {KEY_BUTTON_GPIO_PORT};
 const uint16_t BUTTON_PIN[BUTTONn] = {KEY_BUTTON_PIN};
@@ -118,9 +118,8 @@ typedef struct features_t
 } features_t;
 
 typedef struct labeled_record {
-  record_t data;
   features_t features;
-  uint8_t label; // 0 means moving down horizontally, 1 down vertically, 2 means up horizontally, 3 means up vertically 
+  int8_t label; // 0 means moving down horizontally, 1 down vertically, 2 means up horizontally, 3 means up vertically 
 } labeled_record;
 
 typedef struct indexer
@@ -153,7 +152,7 @@ uint8_t is_used(const indexer * idx, int id)
 typedef struct node_t {
   float split;
   uint8_t dim; // column where the data set is split, feature ID
-  uint8_t label;
+  int8_t label;
   float error; // fraction of opposite labeled data points
   int cnt[4];
   
@@ -186,8 +185,8 @@ void  BSP_PB_Init(Button_TypeDef Button, ButtonMode_TypeDef ButtonMode);
 void USARTConfig(void);
 void ErrorHandler(void);
 fifo_record_t read_it_my_boy(void);
-features_t compute_mean(const node_t * node, uint8_t label);
-features_t compute_std(const node_t * node, const features_t * mean, uint8_t label);
+void compute_mean(const node_t * node, features_t * features, int8_t label);
+void compute_std(const node_t * node, const features_t * mean, features_t * features, int8_t label);
 float compute_gini(const node_t * node, float split_point, int dim);
 float dim_data(const record_t * data, int dim);
 float compute_entropy(const node_t * node, float split_point, int dim);
@@ -422,70 +421,65 @@ record_t compute_peak_to_peak(const record_t * records_max, const record_t * rec
   return peak;
 }
 
-// use label 255 for computing means of all axes
-features_t compute_mean(const node_t * node, uint8_t label)
+// use label -1 for computing means of all axes
+void compute_mean(const node_t * node, features_t * features, int8_t label)
 {
-  features_t features;
-  memset(&features, 0, sizeof(features_t));
-  
+  memset(features, 0, sizeof(features_t));
+
   int num_rec = 0;
   for (int i = 0; i < NUM_CALIB; ++i)
-  { 
-    if ((label != 255 && node->data[i].label != label) || !is_used(&(node->idx), i)) 
-    { 
-      continue; 
+  {
+    if ((label != -1 && node->data[i].label != label) || !is_used(&(node->idx), i))
+    {
+      continue;
     }
-      
+
     const labeled_record * record = &(node->data[i]);
     for (int k = 0; k < NUM_FEATURES; ++k)
     {
-       features.data[k] += record->features.data[k];
+       features->data[k] += record->features.data[k];
     }
-    ++num_rec; 
+    ++num_rec;
   }
-  
+
   if (num_rec)
   {
     for (int k = 0; k < NUM_FEATURES; ++k)
     {
-      features.data[k] /= num_rec;
+      features->data[k] /= num_rec;
     }
   }
-  return features;
 }
 
-// label 0 means down, 1 up
-// use label 255 for computing means of all axes
-features_t compute_std(const node_t * node, const features_t * mean, uint8_t label)
+// use label -! for computing means of all axes
+void compute_std(const node_t * node, const features_t * mean, features_t * features, int8_t label)
 {
-  features_t features;
-  memset(&features, 0, sizeof(features_t));
-  
+  memset(features, 0, sizeof(features_t));
+
   int num_rec = 0;
   for (int i = 0; i < NUM_CALIB; ++i)
   {
-    if ((label != 255 && node->data[i].label != label) || !is_used(&(node->idx), i)) 
-    { 
-      continue; 
+    if ((label != -1 && node->data[i].label != label) || !is_used(&(node->idx), i))
+    {
+      continue;
     }
-    
+
     const labeled_record * record = &(node->data[i]);
     for (int k = 0; k < NUM_FEATURES; ++k)
     {
-       features.data[k] += square(record->features.data[k] - mean->data[k]);
+       features->data[k] += square(record->features.data[k] - mean->data[k]);
     }
     ++num_rec;
   }
-  
+
   if (num_rec > 1)
   {
     for (int k = 0; k < NUM_FEATURES; ++k)
     {
-      features.data[k] /= num_rec - 1;
-      features.data[k] = sqrt(features.data[k]);
+      features->data[k] /= num_rec - 1;
+      features->data[k] = sqrt(features->data[k]);
     }
   }
-  return features;
 }
 
 fifo_record_t read_it_my_boy(void)
@@ -1019,14 +1013,15 @@ pointDim get_best_split(const node_t * node)
 {
   int nValid = count_valid_pts(node);
   int k = sqrt(nValid); // floor
-  features_t mean = compute_mean(node, 255);  
-  features_t std = compute_std(node, &mean, 255);
-  
+  features_t mean, std;
+  compute_mean(node,&mean, -1);
+  compute_std(node, &mean, &std, -1);
+
   pointDim best = {0, -1};
   //float  = 1.0f, split_point = 0;
 // max entropy of a system should be log_2(num_classes);
   float entropyLowest = 200, split_point = 0;
-  
+
   for (int i = 0; i < NUM_FEATURES; ++i)
   {
     for (int j = 1; j <= k; ++j)
@@ -1042,7 +1037,7 @@ pointDim get_best_split(const node_t * node)
       }
     }
   }
-  
+
   return best; // will return dim == -1 in case of failure
 }
 
@@ -1451,74 +1446,38 @@ static const char * classified[] = {"down horizontally","down vertically","up ho
 //third 12 up_hor
 //fourth 12 up_ver
 
-// k = 1 for loading from test_data matrix, k = 2 for data from UART
-void load_features(fifo_record_t output, labeled_record * data, int k)
+void load_features(labeled_record * data)
 {
-  if (k == 1)
-  {
-    for (int i = 0; i < NUM_TEST; ++i)
-    {
-      float * feat_data = data[i].features.data;
-      memcpy(feat_data, test_data[i], NUM_FEATURES * sizeof(float));
-      data[i].label = i / 12;
-    }
-  }
-  else if (k == 2)
-  {
     for (int i = 0; i < NUM_CALIB; ++i)
     {
-      features_t features;
-      calculateFeatures(&output, &features);
-      data[i].features = features;
-      float * feat_data = data[i].features.data;
-      memcpy(feat_data, test_data[i], NUM_FEATURES * sizeof(float));
+        float * feat_data = data[i].features.data;
+        memcpy(feat_data, test_data[i], NUM_FEATURES * sizeof(float));
+        data[i].label = i / 12;
     }
-  }
 }
 
 int main(void)
 {
   init();
-  labeled_record data[NUM_CALIB];
+  labeled_record data[NUM_CALIB];// = malloc(NUM_CALIB * sizeof(labeled_record));
   memset(data, 0, sizeof(data)); // set default labels to down (0)
-
-  snprintf(dataOut, MAX_BUF_SIZE, "\r\nUser or test?\r\n");
-  HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
-  char preference = getUserInput(&UartHandle, "\r\nFor user type '0', for test type '1'.", "01");
-  snprintf(dataOut, MAX_BUF_SIZE, "\r\nYour choice: %c \r\n", preference);
-  HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
-    
-  if (preference == '0')
-  {
-    for (int i = 0; i < NUM_CALIB; ++i)
-    {
-      fifo_record_t output = read_it_my_boy();
-      load_features(output, data, 2);
-      /* _NOTE_: Pushing button creates interrupt/event and wakes up MCU from sleep mode */
-      data[i].data = output.mean;
-      char tmp = getUserInput(&UartHandle, "\r\nFor down horizontally type '0', for down vertically type '1'. For up horizontally type '2', for up vertically type '3'.", "0123");
-      data[i].label = tmp - '0'; // default is down (0)
-      
-      char text[20];
-      
-      for (int k = 0; k < 4; k++)
-      {
-        if (data[i].label == (char)k)
-          strcpy(text, classified[k]);
-      }
-      
-      snprintf(dataOut, MAX_BUF_SIZE, "\r\nClassified: %s \r\n", text);
-      HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
-      Sleep_Mode();
-    }
-  }
   
-  else if (preference == '1')
+#ifdef TESTING
+  load_features(data);
+#else
+  for (int i = 0; i < NUM_CALIB; ++i)
   {
-    fifo_record_t null;
-    memset(&null, 0, sizeof(null));
-    load_features(null, data, 1);
+    fifo_record_t output = read_it_my_boy();
+    calculateFeatures(&output, &(data[i].features));
+    /* _NOTE_: Pushing button creates interrupt/event and wakes up MCU from sleep mode */
+    char tmp = getUserInput(&UartHandle, "\r\nFor down horizontally type '0', for down vertically type '1'. For up horizontally type '2', for up vertically type '3'.", "0123");
+    data[i].label = tmp - '0';
+    
+    snprintf(dataOut, MAX_BUF_SIZE, "\r\nClassified: %s \r\n", classified[data[i].label]);
+    HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+    Sleep_Mode();
   }
+#endif // testing
   
   node_t * head = dec_tree_generator(data);
   print_node_WEKA_J48(head, 0);

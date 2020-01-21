@@ -23,10 +23,12 @@
 #include "com.h"
 #include <math.h>
 #include <stdlib.h>
-#include "C:\IKS0LAB_SensorHub-modified\IKS0LAB_SensorHub\Drivers\lps22hh\lps22hh.h"
-#include "C:\IKS0LAB_SensorHub-modified\IKS0LAB_SensorHub\Drivers\lps22hh\lps22hh_reg.h"
-#include "C:\IKS0LAB_SensorHub-modified\IKS0LAB_SensorHub\Drivers\lsm6dsox\lsm6dsox.h"
-#include "C:\IKS0LAB_SensorHub-modified\IKS0LAB_SensorHub\Drivers\lsm6dsox\lsm6dsox_reg.h"
+#include <stdio.h>
+#include <string.h>
+#include "C:\IKS0LAB_SensorHub\Drivers\lps22hh\lps22hh.h"
+#include "C:\IKS0LAB_SensorHub\Drivers\lps22hh\lps22hh_reg.h"
+#include "C:\IKS0LAB_SensorHub\Drivers\lsm6dsox\lsm6dsox.h"
+#include "C:\IKS0LAB_SensorHub\Drivers\lsm6dsox\lsm6dsox_reg.h"
 
 /* Private typedef -----------------------------------------------------------*/
 extern  I2C_HandleTypeDef I2C_EXPBD_Handle;
@@ -49,6 +51,7 @@ extern  I2C_HandleTypeDef I2C_EXPBD_Handle;
 #define BUTTONn                  1
 #define NUM_CALIB                4
 #define NUM_FEATURES             16
+#define NUM_TEST                 48
 
 GPIO_TypeDef* BUTTON_PORT[BUTTONn] = {KEY_BUTTON_GPIO_PORT};
 const uint16_t BUTTON_PIN[BUTTONn] = {KEY_BUTTON_PIN};
@@ -115,8 +118,9 @@ typedef struct features_t
 } features_t;
 
 typedef struct labeled_record {
+  record_t data;
   features_t features;
-  int8_t label; // 0 means moving down horizontally, 1 down vertically, 2 means up horizontally, 3 means up vertically 
+  uint8_t label; // 0 means moving down horizontally, 1 down vertically, 2 means up horizontally, 3 means up vertically 
 } labeled_record;
 
 typedef struct indexer
@@ -182,10 +186,11 @@ void  BSP_PB_Init(Button_TypeDef Button, ButtonMode_TypeDef ButtonMode);
 void USARTConfig(void);
 void ErrorHandler(void);
 fifo_record_t read_it_my_boy(void);
-void compute_mean(const node_t * node, features_t * features, char label);
-void compute_std(const node_t * node, const features_t * mean, features_t * features, char label);
+features_t compute_mean(const node_t * node, uint8_t label);
+features_t compute_std(const node_t * node, const features_t * mean, uint8_t label);
 float compute_gini(const node_t * node, float split_point, int dim);
 float dim_data(const record_t * data, int dim);
+float compute_entropy(const node_t * node, float split_point, int dim);
 static float square(float val);
 node_t * dec_tree_generator(labeled_record data[]);
 
@@ -359,68 +364,6 @@ char getUserInput(UART_HandleTypeDef *huart, char * welcomeMSG, char * validOpti
   }
 }
 
-// use label 255 for computing means of all axes
-void compute_mean(const node_t * node, features_t * features, char label)
-{
-  memset(&features, 0, sizeof(features_t));
-  
-  int num_rec = 0;
-  for (int i = 0; i < NUM_CALIB; ++i)
-  { 
-    if ((label != 255 && node->data[i].label != label) || !is_used(&(node->idx), i)) 
-    { 
-      continue; 
-    }
-      
-    const labeled_record * record = &(node->data[i]);
-    for (int k = 0; k < NUM_FEATURES; ++k)
-    {
-       features->data[k] += record->features.data[k];
-    }
-    ++num_rec; 
-  }
-  
-  if (num_rec)
-  {
-    for (int k = 0; k < NUM_FEATURES; ++k)
-    {
-      features->data[k] /= num_rec;
-    }
-  }
-}
-
-// label 0 means down, 1 up
-// use label 255 for computing means of all axes
-void compute_std(const node_t * node, const features_t * mean, features_t * features, char label)
-{
-  memset(&features, 0, sizeof(features_t));
-  
-  int num_rec = 0;
-  for (int i = 0; i < NUM_CALIB; ++i)
-  {
-    if ((label != 255 && node->data[i].label != label) || !is_used(&(node->idx), i)) 
-    { 
-      continue; 
-    }
-    
-    const labeled_record * record = &(node->data[i]);
-    for (int k = 0; k < NUM_FEATURES; ++k)
-    {
-       features->data[k] += square(record->features.data[k] - mean->data[k]);
-    }
-    ++num_rec;
-  }
-  
-  if (num_rec > 1)
-  {
-    for (int k = 0; k < NUM_FEATURES; ++k)
-    {
-      features->data[k] /= num_rec - 1;
-      features->data[k] = sqrt(features->data[k]);
-    }
-  }
-}
-
 record_t compute_min(const record_t data[])
 {
   record_t records_min = data[0];
@@ -477,6 +420,72 @@ record_t compute_peak_to_peak(const record_t * records_max, const record_t * rec
   }
   peak.press = records_max->press - records_min->press;
   return peak;
+}
+
+// use label 255 for computing means of all axes
+features_t compute_mean(const node_t * node, uint8_t label)
+{
+  features_t features;
+  memset(&features, 0, sizeof(features_t));
+  
+  int num_rec = 0;
+  for (int i = 0; i < NUM_CALIB; ++i)
+  { 
+    if ((label != 255 && node->data[i].label != label) || !is_used(&(node->idx), i)) 
+    { 
+      continue; 
+    }
+      
+    const labeled_record * record = &(node->data[i]);
+    for (int k = 0; k < NUM_FEATURES; ++k)
+    {
+       features.data[k] += record->features.data[k];
+    }
+    ++num_rec; 
+  }
+  
+  if (num_rec)
+  {
+    for (int k = 0; k < NUM_FEATURES; ++k)
+    {
+      features.data[k] /= num_rec;
+    }
+  }
+  return features;
+}
+
+// label 0 means down, 1 up
+// use label 255 for computing means of all axes
+features_t compute_std(const node_t * node, const features_t * mean, uint8_t label)
+{
+  features_t features;
+  memset(&features, 0, sizeof(features_t));
+  
+  int num_rec = 0;
+  for (int i = 0; i < NUM_CALIB; ++i)
+  {
+    if ((label != 255 && node->data[i].label != label) || !is_used(&(node->idx), i)) 
+    { 
+      continue; 
+    }
+    
+    const labeled_record * record = &(node->data[i]);
+    for (int k = 0; k < NUM_FEATURES; ++k)
+    {
+       features.data[k] += square(record->features.data[k] - mean->data[k]);
+    }
+    ++num_rec;
+  }
+  
+  if (num_rec > 1)
+  {
+    for (int k = 0; k < NUM_FEATURES; ++k)
+    {
+      features.data[k] /= num_rec - 1;
+      features.data[k] = sqrt(features.data[k]);
+    }
+  }
+  return features;
 }
 
 fifo_record_t read_it_my_boy(void)
@@ -635,6 +644,7 @@ fifo_record_t read_it_my_boy(void)
  */
 static void Sleep_Mode(void)
 {
+  return;
   snprintf(dataOut, MAX_BUF_SIZE, "\r\n \r\n");
   HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
   SysTick->CTRL &= ~SysTick_CTRL_TICKINT_Msk; /* Systick IRQ OFF */
@@ -1009,22 +1019,24 @@ pointDim get_best_split(const node_t * node)
 {
   int nValid = count_valid_pts(node);
   int k = sqrt(nValid); // floor
-  features_t mean, std;
-  compute_mean(node,&mean, 255);  
-  compute_std(node, &mean, &std, 255);
+  features_t mean = compute_mean(node, 255);  
+  features_t std = compute_std(node, &mean, 255);
   
   pointDim best = {0, -1};
-  float giniBest = 1.0f, split_point;
+  //float  = 1.0f, split_point = 0;
+// max entropy of a system should be log_2(num_classes);
+  float entropyLowest = 200, split_point = 0;
   
   for (int i = 0; i < NUM_FEATURES; ++i)
   {
     for (int j = 1; j <= k; ++j)
     {
-      split_point = mean.data[i] + std.data[i] * getInverseCDFValue(j /(k + 1));
-      float gini = compute_gini(node, split_point, i);
-      if (gini < giniBest)
+      split_point = mean.data[i] + std.data[i] * getInverseCDFValue((float) j / (k + 1));
+    float error = compute_gini(node, split_point, i);
+     float entropy = compute_entropy(node, split_point, i);
+      if (error < entropyLowest)//entropy < entropyLowest)
       {
-        giniBest = gini;
+        entropyLowest = error;
         best.pt = split_point;
         best.dim = i;
       }
@@ -1064,6 +1076,48 @@ static int sum4(const int * array)
   return res;
 }
 
+float compute_entropy(const node_t * node, float split_point, int dim) // feature dim
+{
+    int labels[4];
+    memset(labels, 0, sizeof(labels));
+    
+    for (int i = 0; i < NUM_CALIB; ++i)
+    {
+      if (!is_used(&(node->idx), i))
+      {continue;}
+        
+      ++labels[node->data[i].label];
+    }
+    
+    // https://towardsdatascience.com/connections-log-likelihood-cross-entropy-kl-divergence-logistic-regression-and-neural-networks-40043dfb6200
+    float res = 0;
+    float nRecords = sum4(labels);
+    for (int i = 0; i < 4; ++i)
+    {
+        if (labels[i])
+        {
+            float px = labels[i] / nRecords;
+            res -= px * log2f(px);
+        }
+    }
+    
+    return res;
+}
+
+int argMax4(int * array)
+{
+    int id = 0, val = array[0];
+    for (int i = 1; i < 4; ++i)
+    {
+        if (array[i] > val)
+        {
+            id = i;
+            val = array[i];
+        }
+    }
+    return id;
+}
+
 float compute_gini(const node_t * node, float split_point, int dim) // feature dim
 {
   int gte[4];
@@ -1087,23 +1141,19 @@ float compute_gini(const node_t * node, float split_point, int dim) // feature d
     }
   }
   
+  int ltLabel = argMax4(lt), gteLabel = argMax4(gte);
+  float ltSum = sum4(lt), gteSum = sum4(gte);
   float res = 0;
-  for (int i = 0; i < 4; ++i)
+  if (ltSum)
   {
-    float n_in_class = lt[i] + gte[i];
-    if (!n_in_class) { continue; }
-    float gini = 1 - square(lt[i] / n_in_class) - square(gte[i] / n_in_class);
-    res += gini * n_in_class;
+      res += (ltSum - lt[ltLabel]) / ltSum * ltSum / (ltSum + gteSum);
+  }
+  if (gteSum)
+  {
+    res += (gteSum - gte[gteLabel]) / gteSum * gteSum / (ltSum + gteSum);
   }
   
-  int nValid = sum4(lt) + sum4(gte);
-  if (nValid == 0)
-  {  
-    snprintf(dataOut, MAX_BUF_SIZE, "\r\nError 0 samples in giniIndex...\r\n");
-    HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
-  }
- 
-  return res / nValid;
+  return res;
 }
 
 void set_label(node_t * node)
@@ -1181,7 +1231,7 @@ void split_node(node_t * node)
   daughter->data = node->data;
   memcpy((void *)(&daughter->idx), (const void *)(&node->idx), sizeof(node->idx));
   
-  cnt = 0;
+  int cnt2 = 0;
   for (int i = 0; i < NUM_CALIB; ++i)
   {
     if (daughter->data[i].features.data[node->dim] < node->split)
@@ -1190,7 +1240,7 @@ void split_node(node_t * node)
     }
     else if(is_used((&daughter->idx), i))
     {
-      ++cnt;
+      ++cnt2;
     }
   }
   if (cnt > 0)
@@ -1204,12 +1254,12 @@ void split_node(node_t * node)
     daughter = NULL;
   }
     
-   if (node->son != NULL && node->son->error > 0)
+   if (node->son != NULL && node->son->error > 0 && cnt > 2)
    {
      split_node(node->son);
    }
    
-   if (node->daughter != NULL && node->daughter->error > 0)
+   if (node->daughter != NULL && node->daughter->error > 0 && cnt2 > 2)
    {
      split_node(node->daughter);
    }
@@ -1232,10 +1282,12 @@ node_t * dec_tree_generator(labeled_record data[] /* nRecords is NUM_CALIB */)
   return head;
 }
 
-const char * dim2text[4] = { "ACC_X",
-                             "ACC_Y",
-                             "ACC_Z",
-                             "PRESSURE" };
+const char * dim2text[16] = {
+    "MEAN_X", "MEAN_Y", "MEAN_Z", "MEAN_PRESSURE",
+    "MAX_X", "MAX_Y", "MAX_Z", "MAX_PRESSURE",
+    "MIN_X", "MIN_Y", "MIN_Z", "MIN_PRESSURE",
+    "PEAK_X", "PEAK_Y", "PEAK_Z", "PEAK_PRESSURE"
+};
 
 int sumator(const node_t * node)
 {
@@ -1255,26 +1307,20 @@ void print_node_WEKA_J48(const node_t * node, int depth)
   {    
       int nRecords = sumator(node);
       static const char *classified[] = {"down horizontally","down vertically","up horizontally","up vertically" };
-      char text[20];
-      
-      for (int i = 0; i < 4; i++)
-      {
-        if (node->label == i)
-          strcpy(text, classified[i]);
-      }
       
       // 0 means moving down horizontally, 1 down vertically, 2 means up horizontally, 3 means up vertically 
-      snprintf(dataOut, MAX_BUF_SIZE, ": %s (%d.0", text, nRecords);
+      snprintf(dataOut, MAX_BUF_SIZE, ": %s (%d.0", classified[node->label], nRecords);
       length = strlen(dataOut);
       
       if (node->error != 0)
       {
-        snprintf(dataOut + length, MAX_BUF_SIZE - length, "/%d.0)", (int)node->error * nRecords);
+        snprintf(dataOut + length, MAX_BUF_SIZE - length, "/%d.0)", (int)(node->error * nRecords));
       }
       else
       {
         snprintf(dataOut + length, MAX_BUF_SIZE - length, ")");
       }
+      printf("%s", dataOut);
       HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
       return;
   }
@@ -1291,6 +1337,7 @@ void print_node_WEKA_J48(const node_t * node, int depth)
       dataOut[length++] = '\t';
     }
     snprintf(dataOut + length, MAX_BUF_SIZE - length, "%s < %.03f", dim2text[node->dim], node->split);
+      printf("%s", dataOut);
     HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
     
     print_node_WEKA_J48(node->son, depth + 1);
@@ -1311,7 +1358,7 @@ void print_node_WEKA_J48(const node_t * node, int depth)
     }
     snprintf(dataOut + length, MAX_BUF_SIZE - length, "%s >= %.03f", dim2text[node->dim], node->split);
     HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
-    
+    printf("%s", dataOut);
     print_node_WEKA_J48(node->daughter, depth + 1);
   }
 }
@@ -1351,25 +1398,129 @@ void calculateFeatures(const fifo_record_t * data, features_t * features)
 
 static const char * classified[] = {"down horizontally","down vertically","up horizontally","up vertically" };
 
+    static const float test_data[48][16] = {269.010, 202.874, 977.952, 988.102, 896.700, 382.592, 1165.954, 988.148, -218.014, 19.215, 831.735, 988.072, 1114.714, 363.377, 334.219, 0.077,
+    179.407, 585.460, 887.391, 988.172, 642.452, 854.793, 959.835, 988.201, -320.372, 168.360, 671.732, 988.124, 962.824, 686.433, 288.103, 0.077,
+    261.171, 427.708, 936.289, 988.120, 630.557, 640.805, 1164.734, 988.144, -141.276, 259.311, 701.134, 988.095, 771.833, 381.494, 463.600, 0.050,
+    175.631, 454.969, 930.153, 988.149, 655.933, 735.660, 1079.273, 988.185, -257.542, 174.826, 734.562, 988.111, 913.475, 560.834, 344.711, 0.075,
+    293.544, 366.244, 926.102, 988.071, 862.540, 598.105, 1093.303, 988.090, -25.925, 168.055, 716.506, 988.047, 888.465, 430.050, 376.797, 0.042,
+    288.384, 382.391, 905.783, 988.089, 716.811, 551.074, 1027.301, 988.134, -128.832, 68.686, 708.210, 988.054, 845.643, 482.388, 319.091, 0.079,
+    397.903, 796.440, -506.306, 987.875, 875.594, 1043.588, -231.373, 987.933, 96.807, 561.017, -874.862, 987.846, 778.787, 482.571, 643.489, 0.087,
+    557.796, 525.338, -769.448, 987.811, 689.117, 724.558, -524.722, 987.902, 233.386, 278.160, -1071.648, 987.711, 455.731, 446.398, 546.926, 0.191,
+    349.518, 238.791, -961.098, 987.481, 996.801, 592.798, -787.937, 987.510, -83.204, -61.915, -1084.580, 987.453, 1080.005, 654.713, 296.643, 0.057,
+    62.861, 1043.466, -71.693, 987.371, 189.649, 1219.329, 191.296, 987.391, -129.015, 842.593, -214.354, 987.358, 318.664, 376.736, 405.650, 0.033,
+    255.120, 1049.468, -31.293, 987.449, 517.402, 1180.228, 74.359, 987.470, 2.928, 851.438, -158.173, 987.402, 514.474, 328.790, 232.532, 0.067,
+    363.475, 206.210, -950.020, 987.292, 774.761, 488.732, -787.266, 987.315, -36.661, -160.430, -1081.835, 987.266, 811.422, 649.162, 294.569, 0.049,
+    201.032, 399.550, 810.287, 987.368, 396.805, 935.191, 1221.342, 987.405, -107.604, -287.981, 214.964, 987.321, 504.409, 1223.172, 1006.378, 0.084,
+    241.054, 530.279, 826.837, 987.368, 589.443, 996.862, 1128.500, 987.438, -12.444, -13.481, 579.317, 987.311, 601.887, 1010.343, 549.183, 0.127,
+    855.183, 289.128, -203.557, 987.305, 1255.929, 923.174, 201.910, 987.379, 380.457, -213.683, -508.679, 987.230, 875.472, 1136.857, 710.589, 0.148,
+    -660.002, 724.125, 184.781, 987.189, -436.882, 1297.348, 481.595, 987.220, -844.301, 107.482, 13.847, 987.150, 407.419, 1189.866, 467.748, 0.071,
+    129.204, 688.007, 544.754, 987.313, 342.881, 1388.848, 931.958, 987.364, -87.047, -61.610, 247.782, 987.260, 429.928, 1450.458, 684.176, 0.104,
+    314.113, 255.474, -1005.884, 987.202, 451.278, 508.130, -794.525, 987.242, 215.391, -149.633, -1283.440, 987.153, 235.887, 657.763, 488.915, 0.089,
+    215.110, -332.017, -761.908, 987.141, 398.574, 71.431, -573.156, 987.184, 111.142, -540.094, -1003.877, 987.106, 287.432, 611.525, 430.721, 0.078,
+    241.578, 290.982, -1002.328, 987.069, 374.540, 444.385, -842.715, 987.095, 128.161, -65.331, -1230.736, 987.044, 246.379, 509.716, 388.021, 0.051,
+    919.709, 155.885, 78.989, 987.119, 1410.991, 691.130, 318.664, 987.150, 410.835, -298.839, -67.344, 987.075, 1000.156, 989.969, 386.008, 0.075,
+    43.456, 555.387, 842.678, 987.062, 238.022, 952.698, 1030.229, 987.113, -153.842, -62.647, 581.025, 987.016, 391.864, 1015.345, 449.204, 0.097,
+    68.985, 419.290, 827.422, 987.156, 250.039, 1120.021, 1166.015, 987.205, -134.322, -195.261, 406.565, 987.118, 384.361, 1315.282, 759.450, 0.087,
+    125.623, 596.153, 810.958, 987.094, 315.797, 988.200, 918.355, 987.163, -19.459, 34.770, 634.461, 987.044, 335.256, 953.430, 283.894, 0.119,
+    -326.381, -36.472, 899.799, 987.156, 102.907, 131.394, 1094.889, 987.169, -714.432, -226.615, 676.246, 987.141, 817.339, 358.009, 418.643, 0.028,
+    51.472, -172.636, 988.676, 987.160, 311.527, 204.228, 1214.998, 987.183, -480.009, -360.937, 864.797, 987.143, 791.536, 565.165, 350.201, 0.040,
+    -317.920, 28.017, 966.289, 987.279, 295.972, 290.055, 1086.959, 987.307, -631.533, -444.080, 840.336, 987.247, 927.505, 734.135, 246.623, 0.060,
+    -55.254, -204.082, 963.983, 987.267, 197.884, 126.575, 1046.089, 987.291, -323.239, -447.252, 803.614, 987.238, 521.123, 573.827, 242.475, 0.053,
+    1.488, -38.259, 1015.327, 987.059, 4.209, -36.051, 1015.833, 987.071, 0.061, -40.748, 1014.796, 987.047, 4.148, 4.697, 1.037, 0.024,
+    -92.988, 209.212, 921.484, 987.104, 628.971, 453.657, 1091.412, 987.148, -738.039, -195.749, 805.993, 987.064, 1367.010, 649.406, 285.419, 0.084,
+    -251.174, 434.113, -626.580, 987.455, 257.420, 1131.672, -84.241, 987.521, -768.051, -112.301, -1183.278, 987.381, 1025.471, 1243.973, 1099.037, 0.140,
+    133.773, -402.289, 843.380, 987.263, 699.426, -114.802, 1090.741, 987.285, -504.592, -630.801, 656.665, 987.238, 1204.018, 515.999, 434.076, 0.047,
+    -927.999, -16.135, -345.004, 987.446, -785.985, 13.664, 59.597, 987.507, -1010.038, -75.030, -640.988, 987.405, 224.053, 88.694, 700.585, 0.101,
+    963.526, 31.049, 172.581, 987.376, 1078.236, 155.367, 614.514, 987.420, 839.299, -83.692, -130.540, 987.351, 238.937, 239.059, 745.054, 0.069,
+    824.537, 70.095, 569.221, 987.447, 986.248, 135.481, 759.084, 987.515, 732.244, -0.976, 391.986, 987.375, 254.004, 136.457, 367.098, 0.139,
+    -879.144, -220.466, 206.717, 987.353, -690.215, 38.674, 454.572, 987.413, -973.194, -370.697, -112.179, 987.302, 282.979, 409.371, 566.751, 0.111,
+    -213.189, -246.885, 748.415, 987.689, -105.408, -28.731, 1094.889, 987.762, -298.534, -477.630, 493.429, 987.632, 193.126, 448.899, 601.460, 0.130,
+    -6.692, 181.707, 1199.730, 987.684, 56.730, 308.233, 1394.765, 987.729, -119.987, 105.713, 849.669, 987.642, 176.717, 202.520, 545.096, 0.088,
+    -244.787, -201.233, 783.905, 987.604, -151.402, 24.583, 1093.791, 987.651, -319.518, -487.512, 466.955, 987.571, 168.116, 512.095, 626.836, 0.079,
+    -160.137, 173.826, 1070.465, 987.655, 62.342, 502.762, 1653.649, 987.708, -370.392, -68.137, 621.712, 987.609, 432.734, 570.899, 1031.937, 0.098,
+    636.053, -330.711, 81.917, 987.620, 1200.602, -48.190, 522.221, 987.648, 263.764, -614.148, -752.801, 987.579, 936.838, 565.958, 1275.022, 0.069,
+    -932.519, 145.162, -343.351, 987.583, -376.675, 402.661, -153.903, 987.598, -1441.613, -330.010, -504.043, 987.554, 1064.938, 732.671, 350.140, 0.044,
+    521.184, -555.710, 44.573, 987.595, 977.586, -252.296, 518.866, 987.628, 279.990, -769.820, -591.517, 987.544, 697.596, 517.524, 1110.383, 0.083,
+    -0.494, -357.936, -1011.209, 987.600, 157.868, -213.866, -610.305, 987.632, -136.823, -561.871, -1285.453, 987.563, 294.691, 348.005, 675.148, 0.070,
+    -590.242, -203.526, 671.244, 987.683, -520.269, 52.948, 751.947, 987.710, -660.142, -296.277, 625.616, 987.644, 139.873, 349.225, 126.331, 0.066,
+    -33.818, -73.279, -1115.775, 987.685, 140.361, 42.151, -803.126, 987.734, -183.732, -284.809, -1448.933, 987.635, 324.093, 326.960, 645.807, 0.099,
+    784.582, -241.035, 240.907, 987.625, 1457.107, 170.434, 389.546, 987.650, 447.679, -623.298, 99.125, 987.587, 1009.428, 793.732, 290.421, 0.063,
+    -1013.930, 65.270, 12.273, 987.782, -508.191, 230.763, 124.257, 987.803, -1510.116, -256.627, -120.170, 987.764, 1001.925, 487.390, 244.427, 0.039};
+//first 12 down_hor
+//second 12 down_ver
+//third 12 up_hor
+//fourth 12 up_ver
+
+// k = 1 for loading from test_data matrix, k = 2 for data from UART
+void load_features(fifo_record_t output, labeled_record * data, int k)
+{
+  if (k == 1)
+  {
+    for (int i = 0; i < NUM_TEST; ++i)
+    {
+      float * feat_data = data[i].features.data;
+      memcpy(feat_data, test_data[i], NUM_FEATURES * sizeof(float));
+      data[i].label = i / 12;
+    }
+  }
+  else if (k == 2)
+  {
+    for (int i = 0; i < NUM_CALIB; ++i)
+    {
+      features_t features;
+      calculateFeatures(&output, &features);
+      data[i].features = features;
+      float * feat_data = data[i].features.data;
+      memcpy(feat_data, test_data[i], NUM_FEATURES * sizeof(float));
+    }
+  }
+}
+
 int main(void)
 {
   init();
   labeled_record data[NUM_CALIB];
   memset(data, 0, sizeof(data)); // set default labels to down (0)
-  
-  for (int i = 0; i < NUM_CALIB; ++i)
-  {
-    /* _NOTE_: Pushing button creates interrupt/event and wakes up MCU from sleep mode */
-    fifo_record_t rec = read_it_my_boy();
-    data[i].label = getUserInput(&UartHandle, "For down horizontally type '0', for down vertically type '1'. For up horizontally type '2', for up vertically type '3'.", "0123");
-    calculateFeatures(&rec, &data[i].features);
+
+  snprintf(dataOut, MAX_BUF_SIZE, "\r\nUser or test?\r\n");
+  HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+  char preference = getUserInput(&UartHandle, "\r\nFor user type '0', for test type '1'.", "01");
+  snprintf(dataOut, MAX_BUF_SIZE, "\r\nYour choice: %c \r\n", preference);
+  HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
     
-    snprintf(dataOut, MAX_BUF_SIZE, "\r\nClassified: %s \r\n", classified[data[i].label]);
-    HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
-    Sleep_Mode();
+  if (preference == '0')
+  {
+    for (int i = 0; i < NUM_CALIB; ++i)
+    {
+      fifo_record_t output = read_it_my_boy();
+      load_features(output, data, 2);
+      /* _NOTE_: Pushing button creates interrupt/event and wakes up MCU from sleep mode */
+      data[i].data = output.mean;
+      char tmp = getUserInput(&UartHandle, "\r\nFor down horizontally type '0', for down vertically type '1'. For up horizontally type '2', for up vertically type '3'.", "0123");
+      data[i].label = tmp - '0'; // default is down (0)
+      
+      char text[20];
+      
+      for (int k = 0; k < 4; k++)
+      {
+        if (data[i].label == (char)k)
+          strcpy(text, classified[k]);
+      }
+      
+      snprintf(dataOut, MAX_BUF_SIZE, "\r\nClassified: %s \r\n", text);
+      HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+      Sleep_Mode();
+    }
   }
   
-  node_t * head = dec_tree_generator(data);      
+  else if (preference == '1')
+  {
+    fifo_record_t null;
+    memset(&null, 0, sizeof(null));
+    load_features(null, data, 1);
+  }
+  
+  node_t * head = dec_tree_generator(data);
   print_node_WEKA_J48(head, 0);
   
   Sleep_Mode();
@@ -1416,7 +1567,7 @@ int main(void)
               
       for (int i = 0; i < NUM_RECORDS; i++)
       {
-        snprintf(dataOut, MAX_BUF_SIZE, "\r\n%.3f, %.3f, %.3f, %.3f", data_out.fifo[i].acc[0], data_out.fifo[i].acc[1], data_out.fifo[i].acc[2], data_out.fifo[i].press);
+        snprintf(dataOut, MAX_BUF_SIZE, "\r\nacc x: %.3f, acc y: %.3f, acc z: %.3f, press: %.3f", data_out.fifo[i].acc[0], data_out.fifo[i].acc[1], data_out.fifo[i].acc[2], data_out.fifo[i].press);
         HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
       }
       

@@ -1,0 +1,26 @@
+MEAN_PRESSURE < 987.432
+|       MEAN_Y < 124.316
+|       |       MAX_Z < 400.546: down_vertically (1.0)
+|       |       MAX_Z >= 400.546: up_horizontally (8.0)
+|       MEAN_Y >= 124.316
+|       |       MIN_Y < 139.393
+|       |       |       MEAN_X < -54.427: down_vertically (2.0/1.0)
+|       |       |       MEAN_X >= -54.427
+|       |       |       |       MEAN_X < 117.478: down_vertically (2.0)
+|       |       |       |       MEAN_X >= 117.478
+|       |       |       |       |       MEAN_X < 174.469: down_vertically (2.0)
+|       |       |       |       |       MEAN_X >= 174.469
+|       |       |       |       |       |       MEAN_X < 316.454: down_vertically (4.0)
+|       |       |       |       |       |       MEAN_X >= 316.454
+|       |       |       |       |       |       |       MEAN_X < 712.789: down_horizontally (1.0)
+|       |       |       |       |       |       |       MEAN_X >= 712.789: down_vertically (2.0)
+|       |       MIN_Y >= 139.393: down_horizontally (1.0)
+MEAN_PRESSURE >= 987.432
+|       MEAN_Y < 154.936
+|       |       MEAN_PRESSURE < 987.548: up_horizontally (2.0)
+|       |       MEAN_PRESSURE >= 987.548: up_vertically (10.0)
+|       MEAN_Y >= 154.936
+|       |       MEAN_X < 50.585
+|       |       |       MEAN_Y < 263.215: up_vertically (2.0)
+|       |       |       MEAN_Y >= 263.215: up_horizontally (1.0)
+|       |       MEAN_X >= 50.585: down_horizontally (10.0)

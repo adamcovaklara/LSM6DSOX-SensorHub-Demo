@@ -1596,10 +1596,19 @@ int32_t lsm6dsox_steps_reset(stmdev_ctx_t *ctx)
   */
 int32_t lsm6dsox_mlc_out_get(stmdev_ctx_t *ctx, uint8_t *buff)
 {
+  return lsm6dsox_mlc_out_get_N(ctx, buff, 8, 1);
+}
+
+// get results of first N MLC decicision trees
+int32_t lsm6dsox_mlc_out_get_N(stmdev_ctx_t *ctx, uint8_t *buff, uint8_t N, uint8_t pos)
+{
+  if (pos + N > 7) {
+    return 69; // out of bounds
+  }
   int32_t ret;
   ret = lsm6dsox_mem_bank_set(ctx, LSM6DSOX_EMBEDDED_FUNC_BANK);
   if (ret == 0) {
-    ret = lsm6dsox_read_reg(ctx, LSM6DSOX_MLC0_SRC, buff, 8);
+    ret = lsm6dsox_read_reg(ctx, LSM6DSOX_MLC0_SRC + pos, buff, N);
   }
   if (ret == 0) {
     ret = lsm6dsox_mem_bank_set(ctx, LSM6DSOX_USER_BANK);

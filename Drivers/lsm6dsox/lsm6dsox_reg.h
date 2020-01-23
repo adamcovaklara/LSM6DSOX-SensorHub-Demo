@@ -1884,6 +1884,7 @@ int32_t lsm6dsox_number_of_steps_get(stmdev_ctx_t *ctx, uint8_t *buff);
 int32_t lsm6dsox_steps_reset(stmdev_ctx_t *ctx);
 
 int32_t lsm6dsox_mlc_out_get(stmdev_ctx_t *ctx, uint8_t *buff);
+int32_t lsm6dsox_mlc_out_get_N(stmdev_ctx_t *ctx, uint8_t *buff, uint8_t N, uint8_t pos);
 
 int32_t lsm6dsox_odr_cal_reg_set(stmdev_ctx_t *ctx, uint8_t val);
 int32_t lsm6dsox_odr_cal_reg_get(stmdev_ctx_t *ctx, uint8_t *val);

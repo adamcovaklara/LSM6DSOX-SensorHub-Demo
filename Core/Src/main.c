@@ -25,10 +25,10 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
-#include "C:\IKS0LAB_SensorHub\Drivers\lps22hh\lps22hh.h"
-#include "C:\IKS0LAB_SensorHub\Drivers\lps22hh\lps22hh_reg.h"
-#include "C:\IKS0LAB_SensorHub\Drivers\lsm6dsox\lsm6dsox.h"
-#include "C:\IKS0LAB_SensorHub\Drivers\lsm6dsox\lsm6dsox_reg.h"
+#include "C:\IKS0LAB_SensorHub-modified\LSM6DSOX-SensorHub-Demo\Drivers\lps22hh\lps22hh.h"
+#include "C:\IKS0LAB_SensorHub-modified\LSM6DSOX-SensorHub-Demo\Drivers\lps22hh\lps22hh_reg.h"
+#include "C:\IKS0LAB_SensorHub-modified\LSM6DSOX-SensorHub-Demo\Drivers\lsm6dsox\lsm6dsox.h"
+#include "C:\IKS0LAB_SensorHub-modified\LSM6DSOX-SensorHub-Demo\Drivers\lsm6dsox\lsm6dsox_reg.h"
 
 /* Private define ------------------------------------------------------------*/
 typedef enum
@@ -1469,7 +1469,7 @@ void print_node_WEKA_J48(const node_t * node, int depth)
   if (isLeaf)
   {
       int nRecords = sumator(node);
-      static const char *classified[] = {"down horizontally","down vertically","up horizontally","up vertically" };
+      static const char *classified[] = {"down_horizontally","down_vertically","up_horizontally","up_vertically" };
 
       // 0 means moving down horizontally, 1 down vertically, 2 means up horizontally, 3 means up vertically
       snprintf(dataOut, MAX_BUF_SIZE, ": %s (%d.0", classified[node->label], nRecords);
@@ -1628,10 +1628,29 @@ int main(void)
   /* Infinite loop */
   while (1)
   {
+    
+    // int32_t lsm6dsox_mlc_out_get(stmdev_ctx_t *ctx, uint8_t *buff);
+    // int32_t lsm6dsox_mlc_get(stmdev_ctx_t *ctx, uint8_t *val);
     // get MLC status register
     lsm6dsox_mlc_status_mainpage_t status;
     int reg1 = lsm6dsox_mlc_status_get(&ag_ctx,&status);
     reg1 = status.is_mlc1;
+    
+    if (reg1) // interrupt set
+    {
+      uint8_t val = 255, val2 = 255;
+      reg1 = lsm6dsox_mlc_out_get_N(&ag_ctx, &val, 1, 1); // get first result
+      reg1 = lsm6dsox_mlc_out_get_N(&ag_ctx, &val2, 1, 2); // get first result
+      if (!reg1) // success
+      {
+        snprintf(dataOut, MAX_BUF_SIZE, "\r\nSuccess: Result of  the first decision tree: %d, second: %d, secondInterrupt: %d\r\n", (int)val, (int)val2, (int)status.is_mlc2);
+      }
+      else
+      {
+        snprintf(dataOut, MAX_BUF_SIZE, "\r\nFailed to obtain the result of  the first decision tree. Error code: %d\r\n", reg1);
+      }
+      HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+    }
       
     if (reg2 != reg1 && reg1 != 0)
     {

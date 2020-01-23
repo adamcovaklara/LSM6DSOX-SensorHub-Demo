@@ -1,21 +1,21 @@
 @relation 'MLC'
 
-@attribute MEAN_ACC_X numeric
-@attribute MEAN_ACC_Y numeric
-@attribute MEAN_ACC_Z numeric
+@attribute MEAN_X numeric
+@attribute MEAN_Y numeric
+@attribute MEAN_Z numeric
 @attribute MEAN_PRESSURE numeric
-@attribute MAX_ACC_X numeric
-@attribute MAX_ACC_Y numeric
-@attribute MAX_ACC_Z numeric
+@attribute MAX_X numeric
+@attribute MAX_Y numeric
+@attribute MAX_Z numeric
 @attribute MAX_PRESSURE numeric
-@attribute MIN_ACC_X numeric
-@attribute MIN_ACC_Y numeric
-@attribute MIN_ACC_Z numeric
+@attribute MIN_X numeric
+@attribute MIN_Y numeric
+@attribute MIN_Z numeric
 @attribute MIN_PRESSURE numeric
-@attribute PEAK_TO_PEAK_ACC_X numeric
-@attribute PEAK_TO_PEAK_ACC_Y numeric
-@attribute PEAK_TO_PEAK_ACC_Z numeric
-@attribute PEAK_TO_PEAK_PRESSURE numeric
+@attribute PEAK_X numeric
+@attribute PEAK_Y numeric
+@attribute PEAK_Z numeric
+@attribute PEAK_PRESSURE numeric
 
 @attribute class {down_horizontally, down_vertically, up_horizontally, up_vertically}
 

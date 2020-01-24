@@ -24,11 +24,12 @@
 #include <math.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <ctype.h>
 #include <string.h>
-#include "C:\IKS0LAB_SensorHub-modified\LSM6DSOX-SensorHub-Demo\Drivers\lps22hh\lps22hh.h"
-#include "C:\IKS0LAB_SensorHub-modified\LSM6DSOX-SensorHub-Demo\Drivers\lps22hh\lps22hh_reg.h"
-#include "C:\IKS0LAB_SensorHub-modified\LSM6DSOX-SensorHub-Demo\Drivers\lsm6dsox\lsm6dsox.h"
-#include "C:\IKS0LAB_SensorHub-modified\LSM6DSOX-SensorHub-Demo\Drivers\lsm6dsox\lsm6dsox_reg.h"
+#include "C:\IKS0LAB_SensorHub\Drivers\lps22hh\lps22hh.h"
+#include "C:\IKS0LAB_SensorHub\Drivers\lps22hh\lps22hh_reg.h"
+#include "C:\IKS0LAB_SensorHub\Drivers\lsm6dsox\lsm6dsox.h"
+#include "C:\IKS0LAB_SensorHub\Drivers\lsm6dsox\lsm6dsox_reg.h"
 
 /* Private define ------------------------------------------------------------*/
 typedef enum
@@ -529,7 +530,7 @@ record_t compute_peak_to_peak(const record_t * records_max, const record_t * rec
   *         The result is stored in a features_t array.
   * @param  * node      node with stored data
   * @param  * features  array of features, from which mean is calculated
-                        retvak is stored to * features
+                        retval is stored to * features
   * @param  label       class, for which is mean calculated
   * @retval None
   */
@@ -569,7 +570,7 @@ void compute_mean(const node_t * node, features_t * features, int8_t label)
   * @param  * node      node with stored data
   * @param  * mean      pointer to mean from compute_mean function
   * @param  * features  array of features, from which std is calculated
-                        retvak is stored to * features
+                        retval is stored to * features
   * @param  label       class, for which is std calculated
   * @retval None
   */
@@ -1590,34 +1591,35 @@ int main(void)
   init();
   labeled_record data[NUM_CALIB];// = malloc(NUM_CALIB * sizeof(labeled_record));
   memset(data, 0, sizeof(data)); // set default labels to down (0)
+  char user_pref = getUserInput(&UartHandle, "\r\nSkip labeling the data? Type y/n...", "ynYN");
   
 //#ifdef TESTING
 //  load_features(data);
 //#else
-  for (int i = 0; i < NUM_CALIB; ++i)
+  if (tolower(user_pref) == 'n')
   {
-    fifo_record_t output = read_it_my_boy();
-    calculateFeatures(&output, &(data[i].features));
-    char tmp = getUserInput(&UartHandle, "\r\nFor down horizontally type '0', for down vertically type '1'. For up horizontally type '2', for up vertically type '3'.", "0123");
-    data[i].label = tmp - '0';
+    for (int i = 0; i < NUM_CALIB; ++i)
+    {
+      fifo_record_t output = read_it_my_boy();
+      calculateFeatures(&output, &(data[i].features));
+      char tmp = getUserInput(&UartHandle, "\r\nFor down horizontally type '0', for down vertically type '1'. For up horizontally type '2', for up vertically type '3'.", "0123");
+      data[i].label = tmp - '0';
+      
+      snprintf(dataOut, MAX_BUF_SIZE, "\r\nClassified: %s \r\n", classified[data[i].label]);
+      HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+      Sleep_Mode();
+    }
+    //#endif // testing
     
-    snprintf(dataOut, MAX_BUF_SIZE, "\r\nClassified: %s \r\n", classified[data[i].label]);
-    HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
-    Sleep_Mode();
+    node_t * head = dec_tree_generator(data);
+    print_node_WEKA_J48(head, 0);
   }
-//#endif // testing
- 
-  node_t * head = dec_tree_generator(data);
-  print_node_WEKA_J48(head, 0);
   
   Sleep_Mode();
   
   // enable MLC & set ODR to 12.5 [Hz]
   lsm6dsox_mlc_set(&ag_ctx, PROPERTY_ENABLE);
   lsm6dsox_mlc_data_rate_set(&ag_ctx, LSM6DSOX_ODR_PRGS_12Hz5);
-  
-  fifo_record_t data_out;
-  int reg2 = 0;
   
   // set MLC status interrupt on pin2
   lsm6dsox_pin_int2_route_t int2_route;
@@ -1635,42 +1637,33 @@ int main(void)
     lsm6dsox_mlc_status_mainpage_t status;
     int reg1 = lsm6dsox_mlc_status_get(&ag_ctx,&status);
     reg1 = status.is_mlc1;
-    
+      
     if (reg1) // interrupt set
     {
-      uint8_t val = 255, val2 = 255;
+      uint8_t val = 255;
       reg1 = lsm6dsox_mlc_out_get_N(&ag_ctx, &val, 1, 1); // get first result
-      reg1 = lsm6dsox_mlc_out_get_N(&ag_ctx, &val2, 1, 2); // get first result
       if (!reg1) // success
       {
-        snprintf(dataOut, MAX_BUF_SIZE, "\r\nSuccess: Result of  the first decision tree: %d, second: %d, secondInterrupt: %d\r\n", (int)val, (int)val2, (int)status.is_mlc2);
+        snprintf(dataOut, MAX_BUF_SIZE, "\r\nResult of the decision tree: %d\r\n", (int)val);
       }
       else
       {
-        snprintf(dataOut, MAX_BUF_SIZE, "\r\nFailed to obtain the result of  the first decision tree. Error code: %d\r\n", reg1);
+        snprintf(dataOut, MAX_BUF_SIZE, "\r\nFailed to obtain the result of the decision tree. Error code: %d\r\n", reg1);
       }
       HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
     }
       
-    if (reg2 != reg1 && reg1 != 0)
-    {
-      snprintf(dataOut, MAX_BUF_SIZE, "\r\n MLC status register: %d", status.is_mlc1);
-      HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
-    }
-    
     if (MLC_interrupt)
     {
       snprintf(dataOut, MAX_BUF_SIZE, "\r\n Change of position.");
       HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
       MLC_interrupt = 0;
     }
-    
-    reg2 = reg1;
-    
+   
     /* _NOTE_: Pushing button creates interrupt/event and wakes up MCU from sleep mode */
     if (button_pressed)
     {        
-      data_out = read_it_my_boy();
+       fifo_record_t data_out = read_it_my_boy();
               
       for (int i = 0; i < NUM_RECORDS; i++)
       {

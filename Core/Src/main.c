@@ -217,7 +217,7 @@ static stmdev_ctx_t ag_ctx;
 
 /* Volatile variables */
 static volatile uint8_t button_pressed = 0;
-static volatile uint8_t MLC_interrupt = 0;
+//static volatile uint8_t MLC_interrupt = 0;
 volatile uint32_t Int_Current_Time1 = 0; /*!< Int_Current_Time1 Value */
 volatile uint32_t Int_Current_Time2 = 0; /*!< Int_Current_Time2 Value */
 
@@ -932,9 +932,6 @@ void init(void)
   snprintf(dataOut, MAX_BUF_SIZE, "\r\n------ LSM6DSOX Sensor Hub DEMO ------\r\n");
   HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
   lsm6dsox_hub_fifo_lps22hh();
-
-  /* Wait for USER BUTTON push */
-  Sleep_Mode();
  
   snprintf(dataOut, MAX_BUF_SIZE, "\r\nPress USER button to start the DEMO ...\r\n");
   HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
@@ -1125,7 +1122,7 @@ static int count_valid_pts(const node_t * node)
 pointDim get_best_split(const node_t * node)
 {
   int nValid = count_valid_pts(node);
-  int k = sqrt(nValid); // floor
+  int k = (int)sqrt(nValid); // floor
   features_t mean, std;
   compute_mean(node,&mean, -1);
   compute_std(node, &mean, &std, -1);
@@ -1303,6 +1300,8 @@ float compute_gini(const node_t * node, float split_point, int dim) // feature d
 
 /**
   * @brief  This function sets a label (maximum occurrence of a class) for a classification.
+  *         Error for misclassified data in node is calculated.
+  *         Sets number of data present in this node.
   * @param  * node          pointer to a node
   * @retval None                        
   */
@@ -1578,6 +1577,45 @@ void calculateFeatures(const fifo_record_t * data, features_t * features)
 //    }
 //}
 
+ /**
+  * @brief  This function returns number of biggest number (letters) stored in fifo.
+  * @param  val    number of digits is calculated from val
+  * @retval Uint8_t                        
+  */
+uint8_t numDigits(float val)
+{
+  uint8_t res = 1;
+  if (val < 0)
+  {
+    val = -val; // flip sign
+    ++res; // add 1 for the '-' sign
+  }
+  res += (uint8_t)log10(val);
+  
+  return res;
+}
+
+ /**
+  * @brief  This function calculates maximum (letters) value in column.
+  * @param  * data    pointer to data
+  * @param  * res     pointer to an array with calculated lengths
+  * @retval None                        
+  */
+void calculateColumnNumLengths(const record_t * data /* NUM_RECORDS */, uint8_t * res /* array of 4 elements */)
+{
+  uint8_t tmp;
+  memset(res, 0, 4 * sizeof(uint8_t));
+  for (int k = 0; k < 4; ++k)
+    for (int i = 0; i < NUM_RECORDS; ++i)
+    {
+       tmp = numDigits(dim_data(&data[i], k));
+       if (tmp > res[k]) 
+       {
+        res[k] = tmp;
+       }
+    }
+}
+
 /**
   * @brief  This is the main function.
   *         User classification of the data
@@ -1592,12 +1630,18 @@ int main(void)
   labeled_record data[NUM_CALIB];// = malloc(NUM_CALIB * sizeof(labeled_record));
   memset(data, 0, sizeof(data)); // set default labels to down (0)
   char user_pref = getUserInput(&UartHandle, "\r\nSkip labeling the data? Type y/n...", "ynYN");
+  snprintf(dataOut, MAX_BUF_SIZE, "\r\nYour choice: %c \r\n", user_pref);
+  HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
   
+  uint8_t colNumLen[4];
 //#ifdef TESTING
 //  load_features(data);
 //#else
   if (tolower(user_pref) == 'n')
   {
+    snprintf(dataOut, MAX_BUF_SIZE, "\r\nEntering sleep mode... Press the BUTTON to continue labeling %d data samples.\r\n", NUM_CALIB);
+    HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
+    Sleep_Mode();
     for (int i = 0; i < NUM_CALIB; ++i)
     {
       fifo_record_t output = read_it_my_boy();
@@ -1605,16 +1649,22 @@ int main(void)
       char tmp = getUserInput(&UartHandle, "\r\nFor down horizontally type '0', for down vertically type '1'. For up horizontally type '2', for up vertically type '3'.", "0123");
       data[i].label = tmp - '0';
       
-      snprintf(dataOut, MAX_BUF_SIZE, "\r\nClassified: %s \r\n", classified[data[i].label]);
+      snprintf(dataOut, MAX_BUF_SIZE, "\r\nClassified: %s\r\n", classified[data[i].label]);
       HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
-      Sleep_Mode();
+      
+      if (i < NUM_CALIB-1)
+        Sleep_Mode();
     }
     //#endif // testing
     
     node_t * head = dec_tree_generator(data);
     print_node_WEKA_J48(head, 0);
+    snprintf(dataOut, MAX_BUF_SIZE, "\r\nCopy this tree to .txt and upload to LSM6DSOX using UNICO.\r\n");
+    HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
   }
   
+  snprintf(dataOut, MAX_BUF_SIZE, "\r\nWaiting for MLC status interrupt... Press the BUTTON to view data in FIFO.\r\n");
+  HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
   Sleep_Mode();
   
   // enable MLC & set ODR to 12.5 [Hz]
@@ -1630,9 +1680,6 @@ int main(void)
   /* Infinite loop */
   while (1)
   {
-    
-    // int32_t lsm6dsox_mlc_out_get(stmdev_ctx_t *ctx, uint8_t *buff);
-    // int32_t lsm6dsox_mlc_get(stmdev_ctx_t *ctx, uint8_t *val);
     // get MLC status register
     lsm6dsox_mlc_status_mainpage_t status;
     int reg1 = lsm6dsox_mlc_status_get(&ag_ctx,&status);
@@ -1652,22 +1699,16 @@ int main(void)
       }
       HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
     }
-      
-    if (MLC_interrupt)
-    {
-      snprintf(dataOut, MAX_BUF_SIZE, "\r\n Change of position.");
-      HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
-      MLC_interrupt = 0;
-    }
    
     /* _NOTE_: Pushing button creates interrupt/event and wakes up MCU from sleep mode */
     if (button_pressed)
     {        
-       fifo_record_t data_out = read_it_my_boy();
-              
+      fifo_record_t data_out = read_it_my_boy();
+      calculateColumnNumLengths(data_out.fifo, colNumLen);
+      
       for (int i = 0; i < NUM_RECORDS; i++)
       {
-        snprintf(dataOut, MAX_BUF_SIZE, "\r\nacc x: %.3f, acc y: %.3f, acc z: %.3f, press: %.3f", data_out.fifo[i].acc[0], data_out.fifo[i].acc[1], data_out.fifo[i].acc[2], data_out.fifo[i].press);
+        snprintf(dataOut, MAX_BUF_SIZE, "\r\nacc x: %*.3f, acc y: %*.3f, acc z: %*.3f, press: %*.3f", 4 + colNumLen[0], data_out.fifo[i].acc[0], 4 + colNumLen[1], data_out.fifo[i].acc[1], 4 + colNumLen[2], data_out.fifo[i].acc[2], 4 + colNumLen[3], data_out.fifo[i].press);
         HAL_UART_Transmit(&UartHandle, (uint8_t *)dataOut, strlen(dataOut), UART_TRANSMIT_TIMEOUT);
       }
       
@@ -1678,6 +1719,7 @@ int main(void)
       lsm6dsox_fifo_mode_set(&ag_ctx, LSM6DSOX_BYPASS_MODE);
       
       button_pressed = 0;
+      Sleep_Mode();
       }
    }
  }
@@ -1759,10 +1801,10 @@ uint32_t user_currentTimeGetElapsedMS(uint32_t Tick1)
  */
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {
-  if (GPIO_Pin == INT2_master_Pin)
-  {
-    MLC_interrupt = 1;
-  }
+//  if (GPIO_Pin == INT2_master_Pin)
+//  {
+//    MLC_interrupt = 1;
+//  }
   
   if (GPIO_Pin == KEY_BUTTON_PIN)
   {

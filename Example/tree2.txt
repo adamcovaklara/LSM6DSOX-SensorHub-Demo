@@ -1,6 +1,0 @@
-MEAN_PRESSURE <= 1007.64
-|   PEAK_ACC_Z <= 258.487: down_hor
-|   PEAK_ACC_Z > 258.487: up_hor
-MEAN_PRESSURE > 1007.64
-|   PEAK_ACC_Y <= 201.819: down_ver
-|   PEAK_ACC_Y > 201.819: up_ver
